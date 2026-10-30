@@ -1,0 +1,1 @@
+"""Outpatient clinic application package."""
