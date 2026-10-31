@@ -1,8 +1,11 @@
+import tkinter as tk
 from tkinter import ttk
 
 
 class PlaceholderView(ttk.Frame):
-    def __init__(self, master: ttk.Frame, title: str) -> None:
+    def __init__(
+        self, master: tk.Misc, title: str, message: str | None = None
+    ) -> None:
         super().__init__(master)
         self.columnconfigure(0, weight=1)
 
@@ -11,6 +14,6 @@ class PlaceholderView(ttk.Frame):
         )
         ttk.Label(
             self,
-            text="Khung giao diện đã sẵn sàng. Màn hình nghiệp vụ sẽ được bổ sung.",
+            text=message or "Màn hình nghiệp vụ đang được triển khai.",
             wraplength=700,
         ).grid(row=1, column=0, sticky="w")
