@@ -35,6 +35,20 @@ class PdfExportTests(unittest.TestCase):
             self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
             self.assertIn(b"NotoSans", output_path.read_bytes())
 
+    def test_exports_bar_chart_when_report_requests_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "bao_cao_bac_si.pdf"
+            xuat_bang_pdf(
+                output_path,
+                "Báo cáo giá trị khám",
+                "Tháng 10/2026",
+                [{"key": "ten", "label": "Bác sĩ", "kind": "text"}],
+                [{"ten": "Nguyễn Văn A"}],
+                {},
+                bieu_do=[{"label": "Nguyễn Văn A", "value": Decimal("125000")}],
+            )
+            self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
+
     def test_rejects_missing_column_value(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             with self.assertRaisesRegex(ValueError, "Thiếu dữ liệu"):

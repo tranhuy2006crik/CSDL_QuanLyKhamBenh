@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class KeDonView(ttk.Frame):
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(self, parent: tk.Misc, ma_phieu: int | None = None) -> None:
         super().__init__(parent, padding=12)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
@@ -23,6 +23,11 @@ class KeDonView(ttk.Frame):
         self.original_quantities: dict[int, int] = {}
         self.current_order_id: int | None = None
         self._build_widgets()
+        if ma_phieu is not None:
+            self.ma_phieu.insert(0, str(ma_phieu))
+            self.ma_phieu.configure(state="readonly")
+            self._reload_medicines(show_errors=False)
+            self._load_order(show_missing_message=False)
 
     def _build_widgets(self) -> None:
         ttk.Label(
@@ -281,7 +286,7 @@ class KeDonView(ttk.Frame):
             )
         self.total_label.configure(text=f"Tổng đơn: {order_total} VNĐ")
 
-    def _load_order(self) -> None:
+    def _load_order(self, show_missing_message: bool = True) -> None:
         try:
             appointment_id = int(self.ma_phieu.get().strip())
             order = lay_don_thuoc(appointment_id)
@@ -292,11 +297,12 @@ class KeDonView(ttk.Frame):
                 self.ma_don.delete(0, "end")
                 self.loi_dan.delete("1.0", "end")
                 self._refresh_table()
-                messagebox.showinfo(
-                    "Đơn thuốc",
-                    "Phiếu khám chưa có đơn. Nhập mã đơn mới để tạo.",
-                    parent=self,
-                )
+                if show_missing_message:
+                    messagebox.showinfo(
+                        "Đơn thuốc",
+                        "Phiếu khám chưa có đơn. Nhập mã đơn mới để tạo.",
+                        parent=self,
+                    )
                 return
 
             self.current_order_id = order["ma_don"]

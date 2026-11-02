@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal, TypedDict
 
@@ -21,10 +21,48 @@ class KhoaDTO(TypedDict):
     ten_khoa: str
 
 
+class BenhNhanDTO(TypedDict):
+    ma_benh_nhan: int
+    ho_ten: str
+    ngay_sinh: date | None
+    nam_sinh: int | None
+    gioi_tinh: str | None
+    dia_chi: str | None
+    so_dien_thoai: str | None
+
+
 class BacSiDTO(TypedDict):
     ma_bac_si: int
     ten_bac_si: str
     ma_khoa: int
+
+
+class BacSiChiTietDTO(BacSiDTO):
+    gia_kham: Decimal
+    phong_kham: str | None
+
+
+class LichLamViecDTO(TypedDict):
+    ma_bac_si: int
+    ten_bac_si: str
+    phong_kham: str | None
+    thu: str
+    gio_bat_dau: time | timedelta
+    gio_ket_thuc: time | timedelta
+
+
+class LichSuKhamRow(TypedDict):
+    ma_phieu: int
+    ngay_gio_kham: datetime
+    ma_bac_si: int
+    ten_bac_si: str
+    ten_khoa: str
+    chan_doan: str | None
+    trieu_chung: str | None
+    gia_kham: Decimal
+    gia_xet_nghiem: Decimal
+    gia_thuoc: Decimal
+    tong_chi_phi: Decimal
 
 
 class XetNghiemDTO(TypedDict):
@@ -105,7 +143,6 @@ class BaoCaoLuotKhamRow(TypedDict):
     ma_khoa: int
     ten_khoa: str
     so_luot_kham: int
-    so_benh_nhan: int
 
 
 class BaoCaoLuotKham(TypedDict):
@@ -114,6 +151,15 @@ class BaoCaoLuotKham(TypedDict):
     ma_khoa: int | None
     rows: list[BaoCaoLuotKhamRow]
     tong_so_luot_kham: int
+
+
+class BaoCaoBacSiRow(TypedDict):
+    ma_bac_si: int
+    ten_bac_si: str
+    ma_khoa: int
+    ten_khoa: str
+    so_luot_kham: int
+    tong_gia_tri: Decimal
 
 
 class BaoCaoGiaTriRow(TypedDict):

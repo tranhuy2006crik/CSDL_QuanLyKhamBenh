@@ -23,18 +23,24 @@ dưới. Không commit kết quả thử chưa thực hiện.
 app/
   config.py                         Đọc config.ini
   contracts.py                      Các kiểu dữ liệu/mã trạng thái dùng chung
+  demo_data.py                      Bộ dữ liệu demo trong bộ nhớ, tách khỏi MySQL
   db.py                             get_connection() dùng chung
   errors.py                         AppError và chuyển lỗi MySQL
   pdf_export.py                     Hàm xuat_bang_pdf() dùng chung
-  read_queries.py                   SQL SELECT dùng chung; cần Đức review/ghép
+  read_queries.py                   SQL tham số hóa theo các bảng/cột ERD
   services/
     don_thuoc_service.py            Ghi đơn, trừ/hoàn tồn trong một transaction
     tra_cuu_service.py              Đọc danh mục và chi tiết lần khám
+    clinic_service.py               Tra cứu, lịch tuần, báo cáo, tạo phiếu/xét nghiệm
   ui/
     app.py                          Cửa sổ Tk duy nhất
-    shell.py                        Notebook 5 tab
-    ke_don.py                       Form kê đơn
-    views/                           Placeholder các màn hình đang chờ bàn giao
+    shell.py                        Chọn vai trò và nhập mã định danh
+    ke_don.py                       Form kê đơn gắn với phiếu khám
+    views/
+      patient_portal.py             Hồ sơ bệnh án và lịch làm việc bác sĩ
+      doctor_portal.py              Tra cứu bệnh nhân và báo cáo bác sĩ
+      visit_dialogs.py              Tạo phiếu, xem khám/xét nghiệm/đơn thuốc
+      common.py                     Bảng, định dạng tiền và hiển thị lỗi
 assets/fonts/                       NotoSans regular/bold và giấy phép
 scripts/smoke_db_gui.py             Tkinter đọc MySQL thật
 sql/                                Schema, view, seed, checks và migrations
@@ -45,11 +51,24 @@ requirements.txt                    Bản khóa phụ thuộc đã cài/thử
 main.py                             Điểm khởi chạy
 ```
 
-Màn hình trong phạm vi là xét nghiệm, kê đơn, tìm kiếm lần khám, báo cáo lượt
-khám và báo cáo tổng giá trị. Hiện chỉ form kê đơn có nội dung; các tab còn lại
-hiển thị thông báo chờ thành viên phụ trách bàn giao, không hiển thị dữ liệu
-giả. `read_queries.py` được thêm để đóng khung alias hợp đồng; Đức cần soát và
-ghép với DDL/view cuối trước khi tích hợp chung.
+Ứng dụng bắt đầu bằng lựa chọn vai trò bệnh nhân/bác sĩ. Bệnh nhân xem lịch sử
+phiếu khám của chính mã bệnh nhân và lịch làm việc tuần theo khoa. Bác sĩ tra
+cứu bệnh nhân, mở hồ sơ, tạo phiếu khám, xem/cập nhật xét nghiệm, kê đơn trong
+ngữ cảnh phiếu và xem báo cáo theo bác sĩ. Các truy vấn tổng chi phí tính riêng
+giá khám áp dụng, tổng đơn giá xét nghiệm và tổng `SoLuongKe * DonGiaApDung`
+của thuốc để tránh nhân lặp do join nhiều dòng chi tiết.
+
+Các truy vấn được viết theo tên bảng/cột trong ERD đã nhận, không phụ thuộc
+view tổng hợp chưa có trong repository. Tuy vậy, SQL schema thật chưa được bàn
+giao nên phải đối chiếu tên kiểu dữ liệu/nullability và chạy integration test
+với script nhóm trước khi dùng chung. `MaPhieuKhamBenh` được nhập thủ công vì
+ERD chưa nêu `AUTO_INCREMENT` hay quy tắc cấp mã; `STTXetNghiem` được cấp trong
+transaction sau khi khóa phiếu khám.
+
+Màn hình nhập mã bệnh nhân/bác sĩ chỉ phân luồng demo, không phải xác thực an
+toàn. Không dùng cho dữ liệu sức khỏe thật nếu chưa thêm cơ chế xác minh danh
+tính/phân quyền. ERD chưa có bảng lịch hẹn, nên ứng dụng không đặt lịch; tab
+lịch bệnh nhân chỉ hiển thị giờ làm việc định kỳ.
 
 ## Cài đặt môi trường trên Windows
 
@@ -108,8 +127,25 @@ CSDL cũ; không chạy migration cũ lên CSDL mới đã dựng từ schema hi
 ./.venv/Scripts/python.exe main.py
 ```
 
-`main.py` tạo một Tk và một Notebook 5 tab. Ứng dụng không tự nạp seed hoặc tự
-reset CSDL.
+`main.py` tạo một Tk; sau khi chọn vai trò và nhập mã, ứng dụng hiển thị các tab
+nghiệp vụ tương ứng. Ứng dụng không tự nạp seed hoặc tự reset CSDL.
+
+### Chạy thử giao diện không cần MySQL
+
+Chế độ này dùng dữ liệu mẫu trong bộ nhớ, không gọi `get_connection()`, không
+đọc/ghi `config.ini` hay CSDL MySQL. Mọi thay đổi trong phiên demo sẽ mất khi
+thoát ứng dụng. Chạy bằng cờ tường minh:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --demo
+```
+
+Tại màn hình chọn vai trò, dùng mã bệnh nhân `900001` hoặc `900002`, mã bác sĩ
+`900101` hoặc `900102`. Mã phiếu khám, mã đơn, thuốc và khoa mẫu cũng mang mã
+riêng thuộc dải `DEMO`; chỉ dùng để bấm thử, không sao chép vào CSDL thật.
+Thanh tiêu đề và màn hình chọn vai trò hiển thị cảnh báo “DEMO OFFLINE”. Nếu
+MySQL lỗi khi chạy `main.py` bình thường, ứng dụng báo lỗi thay vì tự chuyển
+sang demo.
 
 Khi đã có `config.ini`, schema và ít nhất một dòng Khoa, kiểm tra Tkinter đọc
 dữ liệu MySQL thật:
@@ -122,6 +158,23 @@ dữ liệu MySQL thật:
 từ bảng; đổi tên Khoa trong MySQL rồi bấm “Đọc lại MySQL” phải thấy giá trị mới.
 Hiện chưa có `config.ini`/schema dùng chung và chưa ghi nhận bằng chứng chạy,
 nên smoke test thật **chưa chạy**.
+
+## Quy tắc giao diện và truy vấn theo ERD
+
+- Mỗi bệnh nhân có tối đa một hồ sơ bệnh án; lịch sử khám được truy vấn qua
+  `BenhNhan -> HoSoBenAn -> PhieuKhamBenh`.
+- Bộ lọc khoa/bác sĩ ở màn hình bác sĩ chỉ trả về bệnh nhân có phiếu khám phù
+  hợp; ứng dụng không tự thêm hồ sơ bệnh nhân.
+- Lịch bệnh nhân xem là lịch làm việc tuần trong `LichLamViecBacSi`, không phải
+  lịch hẹn hay chỗ còn trống.
+- Xét nghiệm có khóa ghép `(MaPhieuKhamBenh, STTXetNghiem)`. Khi đang chờ kết
+  quả, `KetQuaXetNghiem` và `NgayGioThucHien` cần cho phép `NULL`; khi có kết
+  quả, giao diện yêu cầu ngày giờ thực hiện.
+- ERD hiện không có thuộc tính “Kết luận” riêng, nên màn hình dùng trường
+  `ChanDoan` và không ghi vào cột không tồn tại.
+- Báo cáo đếm số phiếu khám/lượt khám theo từng bác sĩ trong kỳ. Tổng giá trị cộng
+  chi phí các phiếu khám theo công thức đã thống nhất; không phải doanh thu đã
+  thu vì lược đồ chưa có trạng thái thanh toán.
 
 ## Quy tắc kê đơn và tồn kho
 

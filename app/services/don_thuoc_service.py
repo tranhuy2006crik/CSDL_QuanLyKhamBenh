@@ -7,6 +7,7 @@ from mysql.connector.connection import MySQLConnection
 from mysql.connector.cursor import MySQLCursorDict
 
 from app.contracts import DonThuocDTO, DongThuocInput
+from app.demo_data import demo_data, is_demo_mode
 from app.db import get_connection
 from app.errors import AppError, app_error_from_database, require_positive_int
 from app.services.tra_cuu_service import lay_don_thuoc
@@ -240,6 +241,16 @@ def luu_don_thuoc(
         ma_phieu, ma_don, ngay_lap, loi_dan, ds_thuoc
     )
 
+    if is_demo_mode():
+        return demo_data().save_order(
+            ma_phieu,
+            ma_don,
+            ngay_lap,
+            cleaned_loi_dan,
+            cleaned_items,
+            tao_moi,
+        )
+
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
     commit_attempted = False
@@ -449,6 +460,9 @@ def luu_don_thuoc(
 def xoa_don_thuoc(ma_phieu: int, ma_don: int) -> None:
     require_positive_int(ma_phieu, "ma_phieu", "Mã phiếu khám")
     require_positive_int(ma_don, "ma_don", "Mã đơn thuốc")
+    if is_demo_mode():
+        demo_data().delete_order(ma_phieu, ma_don)
+        return
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
     commit_attempted = False

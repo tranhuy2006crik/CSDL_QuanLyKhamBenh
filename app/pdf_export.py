@@ -12,6 +12,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
+from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.platypus import (
     LongTable,
     Paragraph,
@@ -111,6 +112,7 @@ def xuat_bang_pdf(
     cot: list[dict[str, str]],
     rows: list[dict[str, Any]],
     tong_ket: dict[str, Any],
+    bieu_do: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Export the exact report rows supplied by a screen/service to a PDF."""
     if not isinstance(duong_dan, Path):
@@ -131,6 +133,13 @@ def xuat_bang_pdf(
             raise ValueError(
                 "Thiếu dữ liệu cho cột: " + ", ".join(sorted(missing_keys))
             )
+    if bieu_do is not None:
+        for item in bieu_do:
+            if set(item) != {"label", "value"}:
+                raise ValueError("Mỗi mục biểu đồ phải có đúng label và value.")
+            if not isinstance(item["label"], str):
+                raise ValueError("Nhãn biểu đồ phải là văn bản.")
+            _format_money(item["value"])
 
     _register_fonts()
     duong_dan.parent.mkdir(parents=True, exist_ok=True)
@@ -234,6 +243,53 @@ def xuat_bang_pdf(
         Paragraph("<b>Đơn vị tiền:</b> VNĐ", condition_style),
         Spacer(1, 3 * mm),
     ]
+    if bieu_do:
+        chart_height = max(28 * mm, min(65 * mm, 8 * mm * len(bieu_do) + 10 * mm))
+        chart_width = document.width
+        chart = Drawing(chart_width, chart_height)
+        values = [Decimal(str(item["value"])) for item in bieu_do]
+        maximum = max(values, default=Decimal("0")) or Decimal("1")
+        label_width = chart_width * 0.30
+        value_width = chart_width * 0.20
+        bars_width = chart_width - label_width - value_width - 8 * mm
+        row_height = (chart_height - 6 * mm) / max(1, len(bieu_do))
+        for index, item in enumerate(bieu_do):
+            y = chart_height - (index + 1) * row_height
+            value = values[index]
+            label = str(item["label"])
+            if len(label) > 32:
+                label = label[:29] + "..."
+            chart.add(
+                String(0, y + row_height * 0.28, label, fontName="NotoSans", fontSize=7)
+            )
+            bar_length = float(value / maximum) * bars_width if value > 0 else 0
+            if bar_length:
+                chart.add(
+                    Rect(
+                        label_width,
+                        y + row_height * 0.16,
+                        bar_length,
+                        row_height * 0.68,
+                        fillColor=colors.HexColor("#168AAD"),
+                        strokeColor=None,
+                    )
+                )
+            chart.add(
+                String(
+                    label_width + bars_width + 3 * mm,
+                    y + row_height * 0.28,
+                    _format_money(value),
+                    fontName="NotoSans",
+                    fontSize=7,
+                )
+            )
+        story.extend(
+            [
+                Paragraph("So sánh tổng giá trị theo bác sĩ", condition_style),
+                chart,
+                Spacer(1, 3 * mm),
+            ]
+        )
     if rows:
         story.append(table)
     else:
