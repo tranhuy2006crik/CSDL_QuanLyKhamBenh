@@ -1,6 +1,7 @@
 import tkinter as tk
 
 from app.demo_data import disable_demo_mode, enable_demo_mode
+from app.services.appointment_service import reset_appointment_sessions
 from app.ui.shell import ClinicShell
 
 
@@ -10,6 +11,7 @@ class ClinicApp(tk.Tk):
             enable_demo_mode()
         else:
             disable_demo_mode()
+        reset_appointment_sessions()
         super().__init__()
         self.title(
             "Quản lý khám bệnh ngoại trú và kê đơn"
@@ -33,5 +35,6 @@ class ClinicApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _close(self) -> None:
+        reset_appointment_sessions()
         disable_demo_mode()
         self.destroy()

@@ -32,6 +32,7 @@ app/
     don_thuoc_service.py            Ghi đơn, trừ/hoàn tồn trong một transaction
     tra_cuu_service.py              Đọc danh mục và chi tiết lần khám
     clinic_service.py               Tra cứu, lịch tuần, báo cáo, tạo phiếu/xét nghiệm
+    appointment_service.py          Đặt, đổi, hủy và theo dõi lịch hẹn trong RAM
   ui/
     app.py                          Cửa sổ Tk duy nhất
     shell.py                        Chọn vai trò và nhập mã định danh
@@ -39,6 +40,7 @@ app/
     views/
       patient_portal.py             Hồ sơ bệnh án và lịch làm việc bác sĩ
       doctor_portal.py              Tra cứu bệnh nhân và báo cáo bác sĩ
+      appointment_views.py          Đặt lịch bệnh nhân và quản lý lịch bác sĩ
       visit_dialogs.py              Tạo phiếu, xem khám/xét nghiệm/đơn thuốc
       common.py                     Bảng, định dạng tiền và hiển thị lỗi
 assets/fonts/                       NotoSans regular/bold và giấy phép
@@ -52,9 +54,10 @@ main.py                             Điểm khởi chạy
 ```
 
 Ứng dụng bắt đầu bằng lựa chọn vai trò bệnh nhân/bác sĩ. Bệnh nhân xem lịch sử
-phiếu khám của chính mã bệnh nhân và lịch làm việc tuần theo khoa. Bác sĩ tra
-cứu bệnh nhân, mở hồ sơ, tạo phiếu khám, xem/cập nhật xét nghiệm, kê đơn trong
-ngữ cảnh phiếu và xem báo cáo theo bác sĩ. Các truy vấn tổng chi phí tính riêng
+phiếu khám của chính mã bệnh nhân, lịch làm việc tuần theo khoa và đặt/đổi/hủy
+lịch hẹn. Bác sĩ tra cứu bệnh nhân, quản lý lịch hẹn, mở hồ sơ, tạo phiếu khám,
+xem/cập nhật xét nghiệm, kê đơn trong ngữ cảnh phiếu và xem báo cáo theo bác sĩ.
+Các truy vấn tổng chi phí tính riêng
 giá khám áp dụng, tổng đơn giá xét nghiệm và tổng `SoLuongKe * DonGiaApDung`
 của thuốc để tránh nhân lặp do join nhiều dòng chi tiết.
 
@@ -65,10 +68,22 @@ với script nhóm trước khi dùng chung. `MaPhieuKhamBenh` được nhập t
 ERD chưa nêu `AUTO_INCREMENT` hay quy tắc cấp mã; `STTXetNghiem` được cấp trong
 transaction sau khi khóa phiếu khám.
 
-Màn hình nhập mã bệnh nhân/bác sĩ chỉ phân luồng demo, không phải xác thực an
-toàn. Không dùng cho dữ liệu sức khỏe thật nếu chưa thêm cơ chế xác minh danh
-tính/phân quyền. ERD chưa có bảng lịch hẹn, nên ứng dụng không đặt lịch; tab
-lịch bệnh nhân chỉ hiển thị giờ làm việc định kỳ.
+Màn hình nhập mã bệnh nhân/bác sĩ chỉ phân luồng giao diện, không phải xác thực
+an toàn. Không dùng cho dữ liệu sức khỏe thật nếu chưa thêm cơ chế xác minh danh
+tính/phân quyền. Lịch hẹn hiện không được lưu trong MySQL: cả luồng thật và demo
+chỉ giữ lịch trong RAM của phiên ứng dụng; đóng ứng dụng sẽ xóa lịch, các máy
+khác không đồng bộ và không thể chống đặt trùng giữa nhiều tiến trình. Luồng
+thật dùng lịch làm việc trong MySQL và mã bệnh nhân/bác sĩ đã đăng nhập; luồng
+demo dùng dữ liệu mẫu tách biệt. Lịch hẹn không tạo phiếu khám; phiếu chỉ được
+tạo khi bác sĩ thực hiện buổi khám.
+
+Lịch hẹn dùng slot 30 phút trong 30 ngày tới, xác nhận ngay khi đặt thành công,
+mỗi bệnh nhân tối đa một lịch hoạt động/ngày, và mỗi bác sĩ không có hai lịch
+chồng lấn trong cùng tiến trình. Lịch có thể đổi hoặc hủy trước giờ hẹn; hủy
+cần lý do. Bác sĩ có thể ghi nhận đã đến, tạo phiếu khám để hoàn tất, đánh dấu
+vắng mặt sau khi hết slot hoặc hủy lịch trước giờ hẹn. Giờ trống được tính từ
+lịch làm việc định kỳ; ngày nghỉ đột xuất/chặn lịch ngoài hệ thống chưa được
+mô hình hóa. Không có SMS/email nhắc lịch.
 
 ## Cài đặt môi trường trên Windows
 
@@ -166,7 +181,8 @@ nên smoke test thật **chưa chạy**.
 - Bộ lọc khoa/bác sĩ ở màn hình bác sĩ chỉ trả về bệnh nhân có phiếu khám phù
   hợp; ứng dụng không tự thêm hồ sơ bệnh nhân.
 - Lịch bệnh nhân xem là lịch làm việc tuần trong `LichLamViecBacSi`, không phải
-  lịch hẹn hay chỗ còn trống.
+  dữ liệu giữ chỗ. Tab đặt lịch tạo giờ theo lịch làm việc nhưng giữ các lượt
+  hẹn trong RAM; không thêm bảng vào ERD và không lưu vào MySQL.
 - Xét nghiệm có khóa ghép `(MaPhieuKhamBenh, STTXetNghiem)`. Khi đang chờ kết
   quả, `KetQuaXetNghiem` và `NgayGioThucHien` cần cho phép `NULL`; khi có kết
   quả, giao diện yêu cầu ngày giờ thực hiện.

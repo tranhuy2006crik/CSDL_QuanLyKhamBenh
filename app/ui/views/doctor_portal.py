@@ -16,6 +16,7 @@ from app.services.clinic_service import (
     tim_kiem_benh_nhan,
 )
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
+from app.ui.views.appointment_views import DoctorAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
 
 
@@ -55,7 +56,9 @@ class DoctorPortal(ttk.Frame):
             doctor,
         )
         self.report_view = DoctorReportView(self.notebook)
+        self.appointment_view = DoctorAppointmentView(self.notebook, doctor)
         self.notebook.add(self.patient_view, text="Bệnh nhân")
+        self.notebook.add(self.appointment_view, text="Lịch hẹn")
         self.notebook.add(self.report_view, text="Báo cáo bác sĩ")
 
 

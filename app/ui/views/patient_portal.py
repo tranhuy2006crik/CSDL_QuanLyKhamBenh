@@ -11,6 +11,7 @@ from app.services.clinic_service import (
     lay_tien_su_benh,
 )
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
+from app.ui.views.appointment_views import PatientAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog
 
 
@@ -53,8 +54,10 @@ class PatientPortal(ttk.Frame):
         self.history_view = PatientHistoryView(
             self.notebook, patient, self._open_visit
         )
+        self.appointment_view = PatientAppointmentView(self.notebook, patient)
         self.schedule_view = DoctorScheduleView(self.notebook)
         self.notebook.add(self.history_view, text="Hồ sơ bệnh án")
+        self.notebook.add(self.appointment_view, text="Đặt lịch hẹn")
         self.notebook.add(self.schedule_view, text="Lịch làm việc bác sĩ")
 
     def _open_visit(self, ma_phieu: int) -> None:
@@ -266,11 +269,11 @@ class DoctorScheduleView(ttk.Frame):
         if rows:
             status = (
                 "Lịch định kỳ tham khảo; lịch này không cho biết ngày nghỉ đột xuất "
-                "hoặc chỗ còn trống. Vui lòng liên hệ phòng khám để xác nhận."
+                "hoặc chỗ còn trống. Muốn đặt khung giờ cụ thể, mở tab “Đặt lịch hẹn”."
             )
         else:
             status = (
-                "Khoa chưa có lịch làm việc được ghi nhận. Lịch này không phải lịch "
-                "đặt hẹn; vui lòng liên hệ phòng khám để xác nhận."
+                "Khoa chưa có lịch làm việc được ghi nhận nên hiện không có cơ sở "
+                "tạo khung giờ đặt hẹn."
             )
         self.status.configure(text=status)

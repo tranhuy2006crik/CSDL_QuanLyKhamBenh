@@ -52,9 +52,9 @@ class DemoClinicData:
         self.patients = [
             {
                 "ma_benh_nhan": DEMO_PATIENT_ID,
-                "ho_ten": "Lê Minh Huy (DEMO)",
-                "ngay_sinh": date(2006, 5, 10),
-                "nam_sinh": 2006,
+                "ho_ten": "Lê Minh Hùng (DEMO)",
+                "ngay_sinh": date(2002, 2, 6),
+                "nam_sinh": 2002,
                 "gioi_tinh": "Nam",
                 "dia_chi": "Hà Nội (dữ liệu demo)",
                 "so_dien_thoai": "0900000001",
@@ -172,25 +172,32 @@ class DemoClinicData:
                 "don_thuoc": None,
             },
         }
+        weekdays = (
+            "Thứ Hai",
+            "Thứ Ba",
+            "Thứ Tư",
+            "Thứ Năm",
+            "Thứ Sáu",
+            "Thứ Bảy",
+            "Chủ Nhật",
+        )
+        shifts = (
+            (timedelta(hours=8), timedelta(hours=12)),
+            (timedelta(hours=13), timedelta(hours=17)),
+        )
         self.schedule = [
             {
                 "ma_bac_si": DEMO_DOCTOR_ID,
                 "ten_bac_si": "Nguyễn Minh An (DEMO)",
                 "phong_kham": "P. DEMO-01",
-                "thu": "Thứ Hai",
-                "gio_bat_dau": timedelta(hours=8),
-                "gio_ket_thuc": timedelta(hours=12),
+                "thu": weekday,
+                "gio_bat_dau": start,
+                "gio_ket_thuc": end,
                 "ma_khoa": DEMO_DEPARTMENT_ID,
-            },
-            {
-                "ma_bac_si": DEMO_DOCTOR_ID,
-                "ten_bac_si": "Nguyễn Minh An (DEMO)",
-                "phong_kham": "P. DEMO-01",
-                "thu": "Thứ Tư",
-                "gio_bat_dau": timedelta(hours=13),
-                "gio_ket_thuc": timedelta(hours=17),
-                "ma_khoa": DEMO_DEPARTMENT_ID,
-            },
+            }
+            for weekday in weekdays
+            for start, end in shifts
+        ] + [
             {
                 "ma_bac_si": DEMO_SECOND_DOCTOR_ID,
                 "ten_bac_si": "Trần Thu Hà (DEMO)",

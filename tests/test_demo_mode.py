@@ -56,7 +56,7 @@ class DemoModeTests(unittest.TestCase):
             self.assertTrue(lay_tien_su_benh(DEMO_PATIENT_ID))
             self.assertTrue(lay_lich_su_benh_nhan(DEMO_PATIENT_ID))
             self.assertTrue(lay_lich_lam_viec(DEMO_SECOND_DEPARTMENT_ID))
-            self.assertTrue(tim_kiem_benh_nhan("Huy"))
+            self.assertTrue(tim_kiem_benh_nhan(str(DEMO_PATIENT_ID)))
             self.assertTrue(
                 bao_cao_bac_si(date.today().month, date.today().year)
             )

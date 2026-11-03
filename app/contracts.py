@@ -51,6 +51,27 @@ class LichLamViecDTO(TypedDict):
     gio_ket_thuc: time | timedelta
 
 
+AppointmentStatus = Literal[
+    "CONFIRMED", "ARRIVED", "COMPLETED", "NO_SHOW", "CANCELLED"
+]
+
+
+class LichHenDTO(TypedDict):
+    ma_lich: int
+    ma_benh_nhan: int
+    ten_benh_nhan: str
+    ma_bac_si: int
+    ten_bac_si: str
+    ten_khoa: str
+    bat_dau: datetime
+    ket_thuc: datetime
+    trang_thai: AppointmentStatus
+    ly_do_huy: str | None
+    ma_phieu_kham: int | None
+    tao_luc: datetime
+    cap_nhat_luc: datetime
+
+
 class LichSuKhamRow(TypedDict):
     ma_phieu: int
     ngay_gio_kham: datetime
