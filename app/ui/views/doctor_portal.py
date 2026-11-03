@@ -13,12 +13,11 @@ from app.services.clinic_service import (
     lay_khoa,
     lay_lich_su_benh_nhan,
     lay_tien_su_benh,
-    tim_kiem_benh_nhan,
 )
+from app.services.tim_kiem_service import tim_kiem_benh_nhan
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.appointment_views import DoctorAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
-
 
 ALL_DEPARTMENTS = "Tất cả khoa"
 ALL_DOCTORS = "Tất cả bác sĩ"
@@ -228,11 +227,9 @@ class DoctorPatientSearchView(ttk.Frame):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if not selection:
-            messagebox.showinfo(
-                "Hồ sơ bệnh án", "Hãy chọn một bệnh nhân.", parent=self
-            )
+            messagebox.showinfo("Hồ sơ bệnh án", "Hãy chọn một bệnh nhân.", parent=self)
             return
-        patient_id = int(selection[0])
+        patient_id = str(selection[0])
         values = self.table.item(selection[0], "values")
         patient = {
             "ma_benh_nhan": patient_id,
@@ -344,13 +341,11 @@ class PatientHistoryDialog(tk.Toplevel):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if not selection:
-            messagebox.showinfo(
-                "Phiếu khám", "Hãy chọn một phiếu khám.", parent=self
-            )
+            messagebox.showinfo("Phiếu khám", "Hãy chọn một phiếu khám.", parent=self)
             return
         PhieuKhamDetailDialog(
             self,
-            int(selection[0]),
+            str(selection[0]),
             read_only=False,
             on_changed=self._refresh,
         )
@@ -390,7 +385,10 @@ class DoctorReportView(ttk.Frame):
         controls.grid(row=1, column=0, sticky="ew", pady=8)
         ttk.Label(controls, text="Tháng").grid(row=0, column=0, sticky="w")
         self.month = ttk.Combobox(
-            controls, state="readonly", width=5, values=[str(month) for month in range(1, 13)]
+            controls,
+            state="readonly",
+            width=5,
+            values=[str(month) for month in range(1, 13)],
         )
         self.month.set(str(today.month))
         self.month.grid(row=0, column=1, padx=5)
@@ -480,9 +478,9 @@ class DoctorReportView(ttk.Frame):
             footer,
             text="Chi phí ghi nhận = giá khám áp dụng + xét nghiệm + thuốc; không phản ánh thanh toán.",
         ).pack(side="left")
-        ttk.Button(
-            footer, text="Xuất báo cáo PDF", command=self._export_pdf
-        ).pack(side="right")
+        ttk.Button(footer, text="Xuất báo cáo PDF", command=self._export_pdf).pack(
+            side="right"
+        )
         self.rows: list[BaoCaoBacSiRow] = []
         self._refresh()
 
@@ -612,11 +610,11 @@ class DoctorReportView(ttk.Frame):
         if not path_text:
             return
         filters = [
-            f'Tháng {self.month.get()}/{self.year.get()}',
-            f'Khoa: {self.department.get() or ALL_DEPARTMENTS}',
+            f"Tháng {self.month.get()}/{self.year.get()}",
+            f"Khoa: {self.department.get() or ALL_DEPARTMENTS}",
         ]
         if self.keyword.get().strip():
-            filters.append(f'Bác sĩ: {self.keyword.get().strip()}')
+            filters.append(f"Bác sĩ: {self.keyword.get().strip()}")
         try:
             xuat_bang_pdf(
                 Path(path_text),
@@ -639,14 +637,9 @@ class DoctorReportView(ttk.Frame):
                 ],
                 self.rows,
                 {
-                    "so_luot_kham": sum(
-                        int(row["so_luot_kham"]) for row in self.rows
-                    ),
+                    "so_luot_kham": sum(int(row["so_luot_kham"]) for row in self.rows),
                     "tong_gia_tri": sum(
-                        (
-                            Decimal(str(row["tong_gia_tri"] or 0))
-                            for row in self.rows
-                        ),
+                        (Decimal(str(row["tong_gia_tri"] or 0)) for row in self.rows),
                         Decimal("0"),
                     ),
                 },

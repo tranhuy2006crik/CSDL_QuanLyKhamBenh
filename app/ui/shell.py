@@ -100,17 +100,17 @@ class ClinicShell(ttk.Frame):
         code.focus_set()
 
     def _enter_portal(self, role: str, raw_code: str) -> None:
-        try:
-            code = int(raw_code.strip())
-        except ValueError:
+        code = raw_code.strip()
+        if not code:
             hien_loi(
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã định danh phải là số nguyên dương.",
+                    "Mã định danh không được để trống.",
                 ),
             )
             return
+
         try:
             if role == "patient":
                 record = lay_benh_nhan(code)
@@ -119,9 +119,11 @@ class ClinicShell(ttk.Frame):
                         self,
                         AppError(
                             "KHONG_TIM_THAY",
-                            "Không tìm thấy mã bệnh nhân demo."
-                            if self.demo_mode
-                            else "Không tìm thấy mã bệnh nhân trong CSDL.",
+                            (
+                                "Không tìm thấy mã bệnh nhân demo."
+                                if self.demo_mode
+                                else "Không tìm thấy mã bệnh nhân trong CSDL."
+                            ),
                         ),
                     )
                     return
@@ -134,9 +136,11 @@ class ClinicShell(ttk.Frame):
                         self,
                         AppError(
                             "KHONG_TIM_THAY",
-                            "Không tìm thấy mã bác sĩ demo."
-                            if self.demo_mode
-                            else "Không tìm thấy mã bác sĩ trong CSDL.",
+                            (
+                                "Không tìm thấy mã bác sĩ demo."
+                                if self.demo_mode
+                                else "Không tìm thấy mã bác sĩ trong CSDL."
+                            ),
                         ),
                     )
                     return

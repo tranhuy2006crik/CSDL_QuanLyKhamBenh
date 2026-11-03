@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Any
-
 import mysql.connector
 
 
@@ -53,22 +51,17 @@ def app_error_from_database(
         )
     if errno in (1044, 1045, 1049, 2002, 2003, 2005, 2006, 2013, 2055):
         return AppError(
-            "LOI_KET_NOI",
-            "Không kết nối được MySQL. Hãy kiểm tra MySQL và config.ini.",
+            "LOI_KET_NOI", "Không kết nối được MySQL. Hãy kiểm tra MySQL và config.ini."
         )
     if errno == 1451:
         return AppError(
-            "DU_LIEU_DANG_DUOC_SU_DUNG",
-            "Dữ liệu đang được liên kết với bản ghi khác.",
+            "DU_LIEU_DANG_DUOC_SU_DUNG", "Dữ liệu đang được liên kết với bản ghi khác."
         )
     return AppError("LOI_HE_THONG", "Không thể hoàn thành thao tác với CSDL.")
 
 
-def require_positive_int(value: Any, field: str, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            f"{label} phải là số nguyên dương.",
-            field,
-        )
-    return value
+def require_positive_int(value: Any, field: str, label: str) -> str:
+    val = str(value).strip()
+    if not val:
+        raise AppError("DU_LIEU_KHONG_HOP_LE", f"{label} không được để trống.", field)
+    return val

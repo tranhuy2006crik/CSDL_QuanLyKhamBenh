@@ -5,7 +5,8 @@ from decimal import Decimal, InvalidOperation
 from tkinter import messagebox, ttk
 
 from app.errors import AppError
-from app.services.clinic_service import luu_xet_nghiem, tao_phieu_kham
+from app.services.clinic_service import tao_phieu_kham
+from app.services.xet_nghiem_service import luu_xet_nghiem
 from app.services.tra_cuu_service import lay_chi_tiet_lan_kham
 from app.ui.ke_don import KeDonView
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
@@ -71,7 +72,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
 
     def _save(self) -> None:
         try:
-            ma_phieu = int(self.ma_phieu.get().strip())
+            ma_phieu = self.ma_phieu.get().strip()
             tao_phieu_kham(
                 ma_phieu,
                 self.ma_benh_nhan,
@@ -84,7 +85,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã phiếu khám phải là số nguyên dương.",
+                    "Mã phiếu khám phải hợp lệ.",
                     "ma_phieu",
                 ),
             )
@@ -152,9 +153,7 @@ class XetNghiemDialog(tk.Toplevel):
         self.name.focus_set()
 
     def _entry(self, label: str, row: int) -> ttk.Entry:
-        ttk.Label(self, text=label).grid(
-            row=row, column=0, sticky="w", padx=12, pady=5
-        )
+        ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=5)
         entry = ttk.Entry(self)
         entry.grid(row=row, column=1, sticky="ew", padx=12, pady=5)
         return entry
@@ -163,9 +162,7 @@ class XetNghiemDialog(tk.Toplevel):
         try:
             time_value = self.time.get().strip()
             performed_at = (
-                datetime.strptime(time_value, "%d/%m/%Y %H:%M")
-                if time_value
-                else None
+                datetime.strptime(time_value, "%d/%m/%Y %H:%M") if time_value else None
             )
         except ValueError:
             hien_loi(
@@ -319,7 +316,13 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 "don_gia": "Đơn giá áp dụng",
                 "thanh_tien": "Thành tiền",
             },
-            {"ten": 230, "so_luong": 90, "cach_dung": 260, "don_gia": 160, "thanh_tien": 160},
+            {
+                "ten": 230,
+                "so_luong": 90,
+                "cach_dung": 260,
+                "don_gia": 160,
+                "thanh_tien": 160,
+            },
         )
         self.medicine_table.grid(row=0, column=0, sticky="nsew")
         if not self.read_only:
@@ -371,9 +374,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                     row["stt"],
                     row["ten_xet_nghiem"],
                     row["ket_qua"] or "Đang chờ kết quả",
-                    performed_at.strftime("%d/%m/%Y %H:%M")
-                    if performed_at
-                    else "—",
+                    performed_at.strftime("%d/%m/%Y %H:%M") if performed_at else "—",
                     dinh_dang_tien(row["don_gia_ap_dung"]),
                 ),
             )
