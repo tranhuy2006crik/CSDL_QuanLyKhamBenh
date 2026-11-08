@@ -1,21 +1,26 @@
 import tkinter as tk
 from datetime import datetime
-from tkinter import ttk, messagebox
+from decimal import Decimal
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
-from app.services.tim_kiem_service import tim_kiem_benh_nhan
+from app.pdf_export import xuat_bang_pdf
 from app.services.clinic_service import lay_lich_su_benh_nhan, lay_tien_su_benh
-from app.ui.views.common import tao_bang, hien_loi, dinh_dang_tien
+from app.services.tim_kiem_service import tim_kiem_benh_nhan
+from app.services.tra_cuu_service import lay_chi_tiet_lan_kham
+from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
 
 
 class PatientSearchView(ttk.Frame):
     def __init__(self, parent: tk.Misc, ma_bac_si: str) -> None:
         super().__init__(parent, padding=10)
-        self.ma_bac_si = ma_bac_si
+        self.ma_bac_si = str(ma_bac_si).strip()
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         self.selected_patient_data = None
         self.patients_data = {}
+        self.current_visits = []
 
         self.paned = ttk.PanedWindow(self, orient="horizontal")
         self.paned.grid(row=0, column=0, sticky="nsew")
@@ -23,7 +28,6 @@ class PatientSearchView(ttk.Frame):
         self._build_left_panel()
         self._build_right_panel()
 
-        # TỶ LỆ MỚI: Trái chiếm 1 phần, Phải chiếm 4 phần để không bị khuất
         self.paned.add(self.left_panel, weight=1)
         self.paned.add(self.right_panel, weight=5)
 
@@ -35,7 +39,9 @@ class PatientSearchView(ttk.Frame):
         self.left_panel.rowconfigure(4, weight=1)
 
         ttk.Label(
-            self.left_panel, text="Danh sách bệnh nhân", font=("Segoe UI", 12, "bold")
+            self.left_panel,
+            text="Danh sách bệnh nhân",
+            font=("Segoe UI", 12, "bold"),
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         search_frame = ttk.Frame(self.left_panel)
@@ -74,7 +80,9 @@ class PatientSearchView(ttk.Frame):
         self.entry_dob.pack(fill="x", pady=2)
         ttk.Label(self.adv_frame, text="Giới tính:").pack(anchor="w")
         self.combo_gender = ttk.Combobox(
-            self.adv_frame, state="readonly", values=["Tất cả", "NAM", "NU", "KHAC"]
+            self.adv_frame,
+            state="readonly",
+            values=["Tất cả", "NAM", "NU", "KHAC"],
         )
         self.combo_gender.current(0)
         self.combo_gender.pack(fill="x", pady=4)
@@ -87,10 +95,7 @@ class PatientSearchView(ttk.Frame):
             {"ma_bn": "Mã", "ho_ten": "Họ tên"},
             {"ma_bn": 60, "ho_ten": 150},
         )
-
-        # Căn giữa cột Mã Bệnh Nhân
         self.table.column("ma_bn", anchor="center")
-
         self.table.grid(row=4, column=0, sticky="nsew")
 
         scrollbar = ttk.Scrollbar(
@@ -121,7 +126,6 @@ class PatientSearchView(ttk.Frame):
         self.right_panel.columnconfigure(0, weight=1)
         self.right_panel.rowconfigure(1, weight=1)
 
-        # Giao diện khi chưa chọn bệnh nhân nào
         self.empty_view = ttk.Frame(self.right_panel)
         self.empty_view.place(relx=0.5, rely=0.5, anchor="center")
         ttk.Label(
@@ -134,7 +138,6 @@ class PatientSearchView(ttk.Frame):
             foreground="gray",
         ).pack()
 
-        # Giao diện Hồ sơ bệnh án nhúng trực tiếp
         self.detail_view = ttk.Frame(self.right_panel)
         self.detail_view.columnconfigure(0, weight=1)
         self.detail_view.rowconfigure(3, weight=1)
@@ -148,20 +151,25 @@ class PatientSearchView(ttk.Frame):
         self.lbl_name.grid(row=0, column=0, sticky="w")
 
         self.lbl_sub_info = ttk.Label(
-            self.detail_view, text="", font=("Segoe UI", 11), foreground="#6b7280"
+            self.detail_view,
+            text="",
+            font=("Segoe UI", 11),
+            foreground="#6b7280",
         )
         self.lbl_sub_info.grid(row=1, column=0, sticky="w", pady=(4, 12))
 
+        history_frame = ttk.Frame(self.detail_view)
+        history_frame.grid(row=2, column=0, sticky="ew", pady=(0, 16))
+
         self.lbl_medical_history = ttk.Label(
-            self.detail_view,
+            history_frame,
             text="Tiền sử bệnh: —",
-            wraplength=750,
+            wraplength=650,
             justify="left",
             font=("Segoe UI", 10, "italic"),
         )
-        self.lbl_medical_history.grid(row=2, column=0, sticky="ew", pady=(0, 16))
+        self.lbl_medical_history.pack(side="left", fill="x", expand=True)
 
-        # Bảng Lịch sử khám bệnh
         table_frame = ttk.Frame(self.detail_view, relief="solid", borderwidth=1)
         table_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 16))
         table_frame.columnconfigure(0, weight=1)
@@ -179,7 +187,6 @@ class PatientSearchView(ttk.Frame):
                 "chan_doan": "Chẩn đoán",
                 "tong": "Tổng chi phí",
             },
-            # Bóp width lại lần nữa, đảm bảo lọt vừa màn hình nhỏ
             {
                 "ma_phieu": 80,
                 "ngay_gio": 120,
@@ -190,14 +197,11 @@ class PatientSearchView(ttk.Frame):
             },
         )
 
-        # --- CĂN LỀ: Phải đảm bảo khai báo anchor="e" cho cột Tiền tệ ---
         self.table_history.column("ma_phieu", anchor="center")
         self.table_history.column("ngay_gio", anchor="center")
-        self.table_history.column("tong", anchor="e")  # 'e' là East (Bên phải)
+        self.table_history.column("tong", anchor="e")
 
         self.table_history.grid(row=0, column=0, sticky="nsew")
-
-        # XỬ LÝ NHẤP ĐÚP (DOUBLE CLICK)
         self.table_history.bind("<Double-1>", self._open_selected_visit)
 
         history_scroll = ttk.Scrollbar(
@@ -206,9 +210,8 @@ class PatientSearchView(ttk.Frame):
         history_scroll.grid(row=0, column=1, sticky="ns")
         self.table_history.configure(yscrollcommand=history_scroll.set)
 
-        # Nút thao tác
         action_frame = ttk.Frame(self.detail_view)
-        action_frame.grid(row=4, column=0, sticky="w")
+        action_frame.grid(row=4, column=0, sticky="ew")
         ttk.Button(
             action_frame, text="Xem chi tiết phiếu", command=self._open_selected_visit
         ).pack(side="left")
@@ -218,6 +221,9 @@ class PatientSearchView(ttk.Frame):
         ttk.Button(
             action_frame, text="Tải lại hồ sơ", command=self._refresh_history
         ).pack(side="left")
+        ttk.Button(
+            action_frame, text="Xuất PDF hồ sơ", command=self._export_history_pdf
+        ).pack(side="right")
 
     def _perform_search(self):
         keyword = self.entry_keyword.get().strip()
@@ -230,7 +236,9 @@ class PatientSearchView(ttk.Frame):
                 dob_val = datetime.strptime(dob_str, "%d/%m/%Y").date()
             except ValueError:
                 messagebox.showerror(
-                    "Lỗi", "Ngày sinh phải theo định dạng dd/mm/yyyy", parent=self
+                    "Lỗi",
+                    "Ngày sinh phải theo định dạng dd/mm/yyyy",
+                    parent=self,
                 )
                 return
         gender = self.combo_gender.get()
@@ -238,7 +246,10 @@ class PatientSearchView(ttk.Frame):
 
         try:
             results = tim_kiem_benh_nhan(
-                tu_khoa=keyword, ngay_sinh=dob_val, gioi_tinh=gender_val, dia_chi=""
+                tu_khoa=keyword,
+                ngay_sinh=dob_val,
+                gioi_tinh=gender_val,
+                dia_chi="",
             )
         except Exception as e:
             hien_loi(self, e)
@@ -287,6 +298,7 @@ class PatientSearchView(ttk.Frame):
             hien_loi(self, e)
             return
 
+        self.current_visits = visits
         self.lbl_medical_history.configure(
             text=f"Tiền sử bệnh: {medical_history or 'Chưa ghi nhận.'}"
         )
@@ -311,12 +323,41 @@ class PatientSearchView(ttk.Frame):
     def _open_selected_visit(self, event=None):
         selection = self.table_history.selection()
         if not selection:
-            # Tránh lỗi khi nhấp đúp vào khoảng trống
+            if event is None:
+                messagebox.showinfo(
+                    "Phiếu khám", "Hãy chọn một phiếu khám.", parent=self
+                )
             return
+        ma_phieu = str(selection[0]).strip()
+        try:
+            detail = lay_chi_tiet_lan_kham(ma_phieu)
+        except Exception as error:
+            hien_loi(self, error)
+            return
+
+        info = detail["thong_tin"]
+        raw_status = (
+            info.get("trang_thai_phieu_kham") or info.get("TrangThaiPhieuKham") or ""
+        )
+        status = (
+            "HOAN_THANH"
+            if "HOAN_THANH" in ma_phieu.upper()
+            or str(raw_status).strip().upper() == "HOAN_THANH"
+            else "DANG_KHAM"
+        )
+        visit_doctor = str(info.get("ma_bac_si", "")).strip()
+        if status == "DANG_KHAM" and visit_doctor and visit_doctor != self.ma_bac_si:
+            messagebox.showwarning(
+                "Không có quyền truy cập",
+                f"Phiếu khám {ma_phieu} đang trong trạng thái ĐANG KHÁM của bác sĩ {info.get('ten_bac_si', visit_doctor)}. Bạn không có quyền mở phiếu đang khám của bác sĩ khác.",
+                parent=self,
+            )
+            return
+
         PhieuKhamDetailDialog(
             self.winfo_toplevel(),
-            str(selection[0]),
-            read_only=False,
+            ma_phieu,
+            read_only=(status == "HOAN_THANH" or visit_doctor != self.ma_bac_si),
             on_changed=self._refresh_history,
         )
 
@@ -339,3 +380,81 @@ class PatientSearchView(ttk.Frame):
             read_only=False,
             on_changed=self._refresh_history,
         )
+
+    def _export_history_pdf(self):
+        if not self.selected_patient_data:
+            return
+        ma_bn = self.selected_patient_data["MaBenhNhan"]
+        ho_ten = self.selected_patient_data["HoTen"]
+        file_path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Lưu PDF Hồ sơ bệnh án",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"ho_so_benh_an_{ma_bn}.pdf",
+        )
+        if not file_path:
+            return
+        try:
+            cot = [
+                {"key": "ma_phieu", "label": "Mã phiếu", "kind": "text"},
+                {"key": "ngay_gio_kham", "label": "Ngày giờ khám", "kind": "datetime"},
+                {"key": "ten_bac_si", "label": "Bác sĩ", "kind": "text"},
+                {"key": "ten_khoa", "label": "Khoa", "kind": "text"},
+                {"key": "chan_doan", "label": "Chẩn đoán", "kind": "text"},
+                {"key": "tong_chi_phi", "label": "Tổng chi phí", "kind": "money"},
+            ]
+            pdf_rows = [
+                {
+                    "ma_phieu": str(v["ma_phieu"]),
+                    "ngay_gio_kham": v["ngay_gio_kham"],
+                    "ten_bac_si": str(v["ten_bac_si"]),
+                    "ten_khoa": str(v["ten_khoa"]),
+                    "chan_doan": str(v["chan_doan"] or "—"),
+                    "tong_chi_phi": Decimal(str(v["tong_chi_phi"] or 0)),
+                }
+                for v in self.current_visits
+            ]
+            tong_ket = {
+                "tong_so_luot_kham": len(self.current_visits),
+                "gia_kham": sum(
+                    (Decimal(str(v.get("gia_kham") or 0)) for v in self.current_visits),
+                    Decimal("0"),
+                ),
+                "gia_xet_nghiem": sum(
+                    (
+                        Decimal(str(v.get("gia_xet_nghiem") or 0))
+                        for v in self.current_visits
+                    ),
+                    Decimal("0"),
+                ),
+                "gia_thuoc": sum(
+                    (
+                        Decimal(str(v.get("gia_thuoc") or 0))
+                        for v in self.current_visits
+                    ),
+                    Decimal("0"),
+                ),
+                "tong_gia_tri": sum(
+                    (
+                        Decimal(str(v.get("tong_chi_phi") or 0))
+                        for v in self.current_visits
+                    ),
+                    Decimal("0"),
+                ),
+            }
+            xuat_bang_pdf(
+                duong_dan=Path(file_path),
+                tieu_de=f"HỒ SƠ BỆNH ÁN — {ho_ten} ({ma_bn})",
+                dieu_kien=self.lbl_medical_history.cget("text"),
+                cot=cot,
+                rows=pdf_rows,
+                tong_ket=tong_ket,
+            )
+            messagebox.showinfo(
+                "Thành công",
+                f"Đã xuất PDF hồ sơ bệnh án tại:\n{file_path}",
+                parent=self,
+            )
+        except Exception as error:
+            hien_loi(self, error)

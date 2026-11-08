@@ -13,7 +13,6 @@ def tim_kiem_benh_nhan(
     cursor = None
     try:
         cursor = connection.cursor(dictionary=True)
-        # SQL chuẩn từ file 04_search_statistics.sql của Hoàng
         sql = """
             SELECT
                 bn.MaBenhNhan,
@@ -33,11 +32,9 @@ def tim_kiem_benh_nhan(
             AND LOCATE(TRIM(COALESCE(%s, '')), COALESCE(bn.DiaChi, '')) > 0
             ORDER BY bn.HoTen, bn.NgaySinh, bn.MaBenhNhan;
         """
-        # Xử lý các giá trị rỗng thành None (tương đương NULL trong SQL) để COALESCE hoạt động đúng
         val_tu_khoa = tu_khoa.strip() if tu_khoa.strip() else None
         val_dia_chi = dia_chi.strip() if dia_chi.strip() else None
 
-        # Tuple gồm 6 tham số đúng thứ tự SQL yêu cầu
         params = (
             val_tu_khoa,
             val_tu_khoa,

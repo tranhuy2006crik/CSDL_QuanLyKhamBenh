@@ -540,10 +540,11 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         XetNghiemDialog(self, self.ma_phieu, self._notify_changed, row)
 
     def _open_prescription(self) -> None:
+        is_locked = self.trang_thai == "HOAN_THANH" or self.read_only
         dialog = tk.Toplevel(self)
         dialog.title(f"Đơn thuốc — Phiếu khám {self.ma_phieu}")
         dialog.geometry("1180x700")
-        form = KeDonView(dialog, ma_phieu=self.ma_phieu)
+        form = KeDonView(dialog, ma_phieu=self.ma_phieu, read_only=is_locked)
         form.pack(fill="both", expand=True)
         dialog.grab_set()
         self.wait_window(dialog)

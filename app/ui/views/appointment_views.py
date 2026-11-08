@@ -18,7 +18,6 @@ from app.services.clinic_service import lay_danh_sach_bac_si, lay_khoa
 from app.ui.views.common import hien_loi, tao_bang
 from app.ui.views.visit_dialogs import TaoPhieuKhamDialog
 
-
 STATUS_LABELS = {
     "CONFIRMED": "Đã xác nhận",
     "ARRIVED": "Đã đến",
@@ -85,9 +84,7 @@ class PatientAppointmentView(ttk.Frame):
         ttk.Label(booking, text="Bác sĩ").grid(row=0, column=2, sticky="w")
         self.doctor_choice = ttk.Combobox(booking, state="readonly", width=32)
         self.doctor_choice.grid(row=0, column=3, sticky="ew", padx=(5, 12))
-        ttk.Label(booking, text="Ngày (dd/mm/yyyy)").grid(
-            row=0, column=4, sticky="w"
-        )
+        ttk.Label(booking, text="Ngày (dd/mm/yyyy)").grid(row=0, column=4, sticky="w")
         self.booking_date = ttk.Entry(booking, width=14)
         self.booking_date.grid(row=0, column=5, padx=5)
         self.booking_date.insert(0, date.today().strftime("%d/%m/%Y"))
@@ -100,9 +97,7 @@ class PatientAppointmentView(ttk.Frame):
         )
         self.slot_choice = ttk.Combobox(booking, state="readonly", width=20)
         self.slot_choice.grid(row=1, column=1, sticky="w", padx=(5, 12), pady=(8, 0))
-        self.book_button = ttk.Button(
-            booking, text="Đặt lịch", command=self._book
-        )
+        self.book_button = ttk.Button(booking, text="Đặt lịch", command=self._book)
         self.book_button.grid(row=1, column=2, padx=(0, 5), pady=(8, 0))
         self.reschedule_button = ttk.Button(
             booking, text="Đổi lịch đã chọn", command=self._reschedule, state="disabled"
@@ -167,8 +162,7 @@ class PatientAppointmentView(ttk.Frame):
             hien_loi(self, error)
             return
         self.departments = {
-            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-            for row in rows
+            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"] for row in rows
         }
         self.department["values"] = list(self.departments)
         if self.departments:
@@ -214,11 +208,7 @@ class PatientAppointmentView(ttk.Frame):
                 and appointment["ma_bac_si"] == doctor["ma_bac_si"]
                 and appointment["bat_dau"].date() == selected_date
             )
-            exclude_id = (
-                appointment["ma_lich"]
-                if is_rescheduling_same_day
-                else None
-            )
+            exclude_id = appointment["ma_lich"] if is_rescheduling_same_day else None
             slots = gio_con_trong(
                 doctor["ma_bac_si"], selected_date, exclude_ma_lich=exclude_id
             )
@@ -297,9 +287,7 @@ class PatientAppointmentView(ttk.Frame):
             hien_loi(self, error)
             self._find_slots()
             return
-        messagebox.showinfo(
-            "Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self
-        )
+        messagebox.showinfo("Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self)
         self._refresh_appointments()
         self._find_slots()
 
@@ -485,6 +473,13 @@ class DoctorAppointmentView(ttk.Frame):
                 "ly_do": 260,
             },
         )
+        # Cấu hình căn lề chuẩn cho bảng Lịch hẹn của Bác sĩ
+        self.table.column("ma_lich", anchor="center", width=80)
+        self.table.column("thoi_gian", anchor="center", width=150)
+        self.table.column("ma_bn", anchor="center", width=110)
+        self.table.column("benh_nhan", anchor="w", width=220)
+        self.table.column("trang_thai", anchor="center", width=130)
+        self.table.column("ly_do", anchor="w", width=260)
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -532,9 +527,7 @@ class DoctorAppointmentView(ttk.Frame):
     def _refresh(self) -> None:
         try:
             selected_date = _parse_date(self.selected_date.get())
-            rows = lich_theo_bac_si(
-                self.doctor["ma_bac_si"], selected_date
-            )
+            rows = lich_theo_bac_si(self.doctor["ma_bac_si"], selected_date)
         except Exception as error:
             hien_loi(self, error)
             return
@@ -579,14 +572,18 @@ class DoctorAppointmentView(ttk.Frame):
         self.no_show_button.configure(
             state=(
                 "normal"
-                if appointment and status == "CONFIRMED" and now >= appointment["ket_thuc"]
+                if appointment
+                and status == "CONFIRMED"
+                and now >= appointment["ket_thuc"]
                 else "disabled"
             )
         )
         self.cancel_button.configure(
             state=(
                 "normal"
-                if appointment and status == "CONFIRMED" and now < appointment["bat_dau"]
+                if appointment
+                and status == "CONFIRMED"
+                and now < appointment["bat_dau"]
                 else "disabled"
             )
         )
@@ -610,21 +607,39 @@ class DoctorAppointmentView(ttk.Frame):
         appointment = self._selected_appointment()
         if appointment is None:
             return
+
         dialog = TaoPhieuKhamDialog(
             self,
-            appointment["ma_benh_nhan"],
-            appointment["ma_bac_si"],
-            appointment["ten_benh_nhan"],
+            str(appointment["ma_benh_nhan"]),
+            str(self.doctor["ma_bac_si"]),
+            str(appointment["ten_benh_nhan"]),
         )
         self.wait_window(dialog)
         if dialog.result is None:
             return
+
+        ma_phieu_moi = dialog.result
+
+        from app.ui.views.visit_dialogs import PhieuKhamDetailDialog
+
+        detail_dialog = PhieuKhamDetailDialog(
+            self.winfo_toplevel(),
+            ma_phieu_moi,
+            read_only=False,
+        )
+        self.wait_window(detail_dialog)
+
         try:
             cap_nhat_trang_thai(
                 appointment["ma_lich"],
-                self.doctor["ma_bac_si"],
+                str(self.doctor["ma_bac_si"]),
                 "COMPLETED",
-                ma_phieu_kham=dialog.result,
+                ma_phieu_kham=ma_phieu_moi,
+            )
+            messagebox.showinfo(
+                "Thành công",
+                "Đã hoàn tất lịch hẹn và liên kết phiếu khám.",
+                parent=self,
             )
         except Exception as error:
             hien_loi(self, error)

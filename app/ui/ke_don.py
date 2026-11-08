@@ -9,25 +9,32 @@ from app.errors import AppError
 from app.services.don_thuoc_service import luu_don_thuoc, xoa_don_thuoc
 from app.services.tra_cuu_service import lay_don_thuoc, lay_thuoc
 
-
 logger = logging.getLogger(__name__)
 
 
 class KeDonView(ttk.Frame):
-    def __init__(self, parent: tk.Misc, ma_phieu: int | None = None) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        ma_phieu: str | int | None = None,
+        read_only: bool = False,
+    ) -> None:
         super().__init__(parent, padding=12)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
+        self.read_only = read_only
         self.medicines: dict[str, ThuocDanhMuc] = {}
-        self.draft: dict[int, DongThuocDraft] = {}
-        self.original_quantities: dict[int, int] = {}
-        self.current_order_id: int | None = None
+        self.draft: dict[str, DongThuocDraft] = {}
+        self.original_quantities: dict[str, int] = {}
+        self.current_order_id: str | None = None
         self._build_widgets()
         if ma_phieu is not None:
-            self.ma_phieu.insert(0, str(ma_phieu))
+            self.ma_phieu.insert(0, str(ma_phieu).strip())
             self.ma_phieu.configure(state="readonly")
             self._reload_medicines(show_errors=False)
             self._load_order(show_missing_message=False)
+        if self.read_only:
+            self._apply_read_only()
 
     def _build_widgets(self) -> None:
         ttk.Label(
@@ -45,17 +52,16 @@ class KeDonView(ttk.Frame):
         self.ma_don = self._entry(header, "Mã đơn (nhập tay)", 0, 2)
         self.ngay_lap = self._entry(header, "Ngày lập (dd/mm/yyyy)", 0, 4)
         self.ngay_lap.insert(0, datetime.now().strftime("%d/%m/%Y"))
-        ttk.Button(header, text="Tải đơn theo phiếu", command=self._load_order).grid(
-            row=0, column=6, padx=(8, 0), sticky="ew"
+        self.btn_load_order = ttk.Button(
+            header, text="Tải đơn theo phiếu", command=self._load_order
         )
+        self.btn_load_order.grid(row=0, column=6, padx=(8, 0), sticky="ew")
 
         ttk.Label(header, text="Lời dặn chung").grid(
             row=1, column=0, sticky="w", pady=(8, 0)
         )
         self.loi_dan = tk.Text(header, height=2, wrap="word")
-        self.loi_dan.grid(
-            row=1, column=1, columnspan=6, sticky="ew", pady=(8, 0)
-        )
+        self.loi_dan.grid(row=1, column=1, columnspan=6, sticky="ew", pady=(8, 0))
 
         medicine_frame = ttk.LabelFrame(self, text="Thêm thuốc", padding=8)
         medicine_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -68,12 +74,14 @@ class KeDonView(ttk.Frame):
         self.medicine_info.grid(row=0, column=2, sticky="w", padx=6)
         self.quantity = self._entry(medicine_frame, "Số lượng", 0, 3)
         self.dosage = self._entry(medicine_frame, "Cách dùng", 0, 5)
-        ttk.Button(
+        self.btn_reload_med = ttk.Button(
             medicine_frame, text="Tải danh mục", command=self._reload_medicines
-        ).grid(row=0, column=7, padx=4)
-        ttk.Button(medicine_frame, text="Thêm dòng", command=self._add_medicine).grid(
-            row=0, column=8, padx=4
         )
+        self.btn_reload_med.grid(row=0, column=7, padx=4)
+        self.btn_add_med = ttk.Button(
+            medicine_frame, text="Thêm dòng", command=self._add_medicine
+        )
+        self.btn_add_med.grid(row=0, column=8, padx=4)
 
         table_frame = ttk.Frame(self)
         table_frame.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
@@ -105,8 +113,14 @@ class KeDonView(ttk.Frame):
         for key, label in headings.items():
             self.table.heading(key, text=label)
             self.table.column(key, width=115, anchor="w")
+        self.table.column("ma_thuoc", anchor="center", width=80)
         self.table.column("ten_thuoc", width=190)
+        self.table.column("so_luong", anchor="center", width=90)
+        self.table.column("don_vi", anchor="center", width=90)
         self.table.column("cach_dung", width=180)
+        self.table.column("don_gia", anchor="e", width=120)
+        self.table.column("thanh_tien", anchor="e", width=120)
+        self.table.column("ton", anchor="center", width=90)
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -116,24 +130,35 @@ class KeDonView(ttk.Frame):
 
         controls = ttk.Frame(self)
         controls.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(
+        self.btn_remove_med = ttk.Button(
             controls, text="Xóa thuốc khỏi bản nháp", command=self._remove_medicine
-        ).pack(side="left")
-        ttk.Button(controls, text="Lưu đơn", command=self._save_order).pack(
-            side="right", padx=(6, 0)
         )
-        ttk.Button(controls, text="Hủy đơn đã lưu", command=self._delete_order).pack(
-            side="right"
+        self.btn_remove_med.pack(side="left")
+        self.btn_save = ttk.Button(controls, text="Lưu đơn", command=self._save_order)
+        self.btn_save.pack(side="right", padx=(6, 0))
+        self.btn_delete = ttk.Button(
+            controls, text="Hủy đơn đã lưu", command=self._delete_order
         )
+        self.btn_delete.pack(side="right")
         self.total_label = ttk.Label(
             self, text="Tổng đơn: 0 VNĐ", font=("TkDefaultFont", 10, "bold")
         )
         self.total_label.grid(row=5, column=0, sticky="e", pady=(8, 0))
 
+    def _apply_read_only(self) -> None:
+        self.ma_don.configure(state="readonly")
+        self.ngay_lap.configure(state="readonly")
+        self.quantity.configure(state="disabled")
+        self.dosage.configure(state="disabled")
+        self.medicine_box.configure(state="disabled")
+        self.loi_dan.configure(state="disabled")
+        self.btn_add_med.configure(state="disabled")
+        self.btn_remove_med.configure(state="disabled")
+        self.btn_save.configure(state="disabled")
+        self.btn_delete.configure(state="disabled")
+
     @staticmethod
-    def _entry(
-        parent: ttk.Frame, label: str, row: int, column: int
-    ) -> ttk.Entry:
+    def _entry(parent: ttk.Frame, label: str, row: int, column: int) -> ttk.Entry:
         ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w")
         entry = ttk.Entry(parent)
         entry.grid(row=row, column=column + 1, sticky="ew", padx=(4, 8))
@@ -152,14 +177,11 @@ class KeDonView(ttk.Frame):
             if error.code in {"KHONG_DU_TON", "XUNG_DOT_DU_LIEU"}:
                 self._reload_medicines(show_errors=False)
             if error.code == "DA_LUU_CAN_TAI_LAI":
-                try:
-                    self.current_order_id = int(self.ma_don.get().strip())
-                    self.original_quantities = {
-                        medicine_id: row["so_luong_ke"]
-                        for medicine_id, row in self.draft.items()
-                    }
-                except ValueError:
-                    pass
+                self.current_order_id = self.ma_don.get().strip() or None
+                self.original_quantities = {
+                    str(medicine_id): row["so_luong_ke"]
+                    for medicine_id, row in self.draft.items()
+                }
             messagebox.showerror("Không thể hoàn thành", error.message, parent=self)
             return
         logger.exception("Unexpected error in prescription form", exc_info=error)
@@ -179,8 +201,7 @@ class KeDonView(ttk.Frame):
 
         self.medicines = {str(row["ma_thuoc"]): row for row in rows}
         self.medicine_box["values"] = [
-            f'{row["ma_thuoc"]} - {row["ten_thuoc"]}'
-            for row in rows
+            f'{row["ma_thuoc"]} - {row["ten_thuoc"]}' for row in rows
         ]
         self._refresh_table()
         return True
@@ -190,7 +211,7 @@ class KeDonView(ttk.Frame):
         if not selected:
             return None
         try:
-            medicine_id = selected.split(" - ", 1)[0]
+            medicine_id = selected.split(" - ", 1)[0].strip()
             return self.medicines.get(medicine_id)
         except (ValueError, IndexError):
             return None
@@ -208,6 +229,8 @@ class KeDonView(ttk.Frame):
         )
 
     def _add_medicine(self) -> None:
+        if self.read_only:
+            return
         medicine = self._selected_medicine()
         if medicine is None:
             self._handle_error(
@@ -240,9 +263,9 @@ class KeDonView(ttk.Frame):
             )
             return
 
-        medicine_id = medicine["ma_thuoc"]
+        medicine_id = str(medicine["ma_thuoc"])
         self.draft[medicine_id] = {
-            "ma_thuoc": medicine_id,
+            "ma_thuoc": medicine["ma_thuoc"],
             "so_luong_ke": quantity,
             "cach_dung": dosage,
             "don_gia_ap_dung": medicine["don_gia"],
@@ -252,10 +275,12 @@ class KeDonView(ttk.Frame):
         self._refresh_table()
 
     def _remove_medicine(self) -> None:
+        if self.read_only:
+            return
         selection = self.table.selection()
         if not selection:
             return
-        medicine_id = int(selection[0])
+        medicine_id = str(selection[0])
         self.draft.pop(medicine_id, None)
         self._refresh_table()
 
@@ -263,7 +288,7 @@ class KeDonView(ttk.Frame):
         for item in self.table.get_children():
             self.table.delete(item)
         order_total = Decimal("0")
-        for medicine_id in sorted(self.draft):
+        for medicine_id in sorted(self.draft, key=str):
             row = self.draft[medicine_id]
             medicine = self.medicines.get(str(medicine_id), {})
             price = Decimal(str(row["don_gia_ap_dung"]))
@@ -279,25 +304,39 @@ class KeDonView(ttk.Frame):
                     row["so_luong_ke"],
                     row["don_vi_tinh"],
                     row["cach_dung"],
-                    f"{price} VNĐ",
-                    f"{total} VNĐ",
+                    f"{price:,.0f} VNĐ".replace(",", "."),
+                    f"{total:,.0f} VNĐ".replace(",", "."),
                     medicine.get("so_luong_co_san", "Không rõ"),
                 ),
             )
-        self.total_label.configure(text=f"Tổng đơn: {order_total} VNĐ")
+        self.total_label.configure(
+            text=f"Tổng đơn: {order_total:,.0f} VNĐ".replace(",", ".")
+        )
 
     def _load_order(self, show_missing_message: bool = True) -> None:
         try:
-            appointment_id = int(self.ma_phieu.get().strip())
+            # Hỗ trợ mã phiếu khám dạng chuỗi (str) như PK00111, không dùng int()
+            appointment_id = self.ma_phieu.get().strip()
+            if not appointment_id:
+                raise AppError(
+                    "DU_LIEU_KHONG_HOP_LE",
+                    "Mã phiếu khám không được để trống.",
+                    "ma_phieu",
+                )
             order = lay_don_thuoc(appointment_id)
             self.draft.clear()
             self.original_quantities.clear()
+            self.loi_dan.configure(state="normal")
+            self.ma_don.configure(state="normal")
+            self.ngay_lap.configure(state="normal")
             if order is None:
                 self.current_order_id = None
                 self.ma_don.delete(0, "end")
                 self.loi_dan.delete("1.0", "end")
                 self._refresh_table()
-                if show_missing_message:
+                if self.read_only:
+                    self._apply_read_only()
+                elif show_missing_message:
                     messagebox.showinfo(
                         "Đơn thuốc",
                         "Phiếu khám chưa có đơn. Nhập mã đơn mới để tạo.",
@@ -305,7 +344,7 @@ class KeDonView(ttk.Frame):
                     )
                 return
 
-            self.current_order_id = order["ma_don"]
+            self.current_order_id = str(order["ma_don"])
             self.ma_don.delete(0, "end")
             self.ma_don.insert(0, str(order["ma_don"]))
             self.ngay_lap.delete(0, "end")
@@ -313,10 +352,10 @@ class KeDonView(ttk.Frame):
             self.loi_dan.delete("1.0", "end")
             self.loi_dan.insert("1.0", order["loi_dan"] or "")
             for line in order["ds_thuoc"]:
-                medicine_id = line["ma_thuoc"]
+                medicine_id = str(line["ma_thuoc"])
                 self.original_quantities[medicine_id] = line["so_luong_ke"]
                 self.draft[medicine_id] = {
-                    "ma_thuoc": medicine_id,
+                    "ma_thuoc": line["ma_thuoc"],
                     "ten_thuoc": line["ten_thuoc"],
                     "don_vi_tinh": line["don_vi_tinh"],
                     "so_luong_ke": line["so_luong_ke"],
@@ -324,35 +363,29 @@ class KeDonView(ttk.Frame):
                     "don_gia_ap_dung": line["don_gia_ap_dung"],
                 }
             self._reload_medicines()
-        except (ValueError, TypeError):
-            self._handle_error(
-                AppError(
-                    "DU_LIEU_KHONG_HOP_LE",
-                    "Mã phiếu khám phải là số nguyên dương.",
-                    "ma_phieu",
-                )
-            )
+            if self.read_only:
+                self._apply_read_only()
         except Exception as error:
             self._handle_error(error)
 
     def _save_order(self) -> None:
+        if self.read_only:
+            return
         try:
-            try:
-                appointment_id = int(self.ma_phieu.get().strip())
-            except ValueError as error:
+            appointment_id = self.ma_phieu.get().strip()
+            if not appointment_id:
                 raise AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã phiếu khám phải là số nguyên dương.",
+                    "Mã phiếu khám không được để trống.",
                     "ma_phieu",
-                ) from error
-            try:
-                order_id = int(self.ma_don.get().strip())
-            except ValueError as error:
+                )
+            order_id = self.ma_don.get().strip()
+            if not order_id:
                 raise AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã đơn thuốc phải là số nguyên dương.",
+                    "Mã đơn thuốc không được để trống.",
                     "ma_don",
-                ) from error
+                )
             try:
                 order_date = datetime.strptime(
                     self.ngay_lap.get().strip(), "%d/%m/%Y"
@@ -372,7 +405,7 @@ class KeDonView(ttk.Frame):
                 for row in self.draft.values()
             ]
             reduced_stock = any(
-                row["so_luong_ke"] < self.original_quantities.get(medicine_id, 0)
+                row["so_luong_ke"] < self.original_quantities.get(str(medicine_id), 0)
                 for medicine_id, row in self.draft.items()
             ) or any(
                 medicine_id not in self.draft
@@ -396,13 +429,12 @@ class KeDonView(ttk.Frame):
                 ds_thuoc=medicines,
                 tao_moi=self.current_order_id is None,
             )
-            self.current_order_id = saved["ma_don"]
+            self.current_order_id = str(saved["ma_don"])
             self.original_quantities = {
-                line["ma_thuoc"]: line["so_luong_ke"]
-                for line in saved["ds_thuoc"]
+                str(line["ma_thuoc"]): line["so_luong_ke"] for line in saved["ds_thuoc"]
             }
             self.draft = {
-                line["ma_thuoc"]: {
+                str(line["ma_thuoc"]): {
                     "ma_thuoc": line["ma_thuoc"],
                     "ten_thuoc": line["ten_thuoc"],
                     "don_vi_tinh": line["don_vi_tinh"],
@@ -427,6 +459,8 @@ class KeDonView(ttk.Frame):
             self._handle_error(error)
 
     def _delete_order(self) -> None:
+        if self.read_only:
+            return
         if self.current_order_id is None:
             self._handle_error(
                 AppError("KHONG_TIM_THAY", "Hãy tải đơn đã lưu trước khi xóa.")
@@ -445,7 +479,7 @@ class KeDonView(ttk.Frame):
             return
 
         try:
-            appointment_id = int(self.ma_phieu.get().strip())
+            appointment_id = self.ma_phieu.get().strip()
             xoa_don_thuoc(appointment_id, self.current_order_id)
             self.current_order_id = None
             self.original_quantities.clear()
@@ -454,9 +488,7 @@ class KeDonView(ttk.Frame):
             self.loi_dan.delete("1.0", "end")
             self._refresh_table()
             if self._reload_medicines(show_errors=False):
-                messagebox.showinfo(
-                    "Đơn thuốc", "Đã hủy đơn và hoàn tồn.", parent=self
-                )
+                messagebox.showinfo("Đơn thuốc", "Đã hủy đơn và hoàn tồn.", parent=self)
             else:
                 messagebox.showwarning(
                     "Đơn đã hủy",
@@ -466,13 +498,5 @@ class KeDonView(ttk.Frame):
                     ),
                     parent=self,
                 )
-        except (ValueError, TypeError):
-            self._handle_error(
-                AppError(
-                    "DU_LIEU_KHONG_HOP_LE",
-                    "Mã phiếu khám phải là số nguyên dương.",
-                    "ma_phieu",
-                )
-            )
         except Exception as error:
             self._handle_error(error)

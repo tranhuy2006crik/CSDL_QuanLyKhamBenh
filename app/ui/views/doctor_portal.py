@@ -4,12 +4,11 @@ from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO
-from app.errors import AppError
+from app.contracts import BacSiDTO, BaoCaoBacSiRow
 from app.pdf_export import xuat_bang_pdf
 from app.services.clinic_service import bao_cao_bac_si, lay_khoa
-from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.appointment_views import DoctorAppointmentView
+from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.patient_search_view import PatientSearchView
 
 ALL_DEPARTMENTS = "Tất cả khoa"
@@ -44,11 +43,9 @@ class DoctorPortal(ttk.Frame):
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=1, column=0, sticky="nsew")
 
-        # Truyền trực tiếp mã bác sĩ vào PatientSearchView thay vì callback
         self.patient_view = PatientSearchView(
-            self.notebook, ma_bac_si=self.doctor["ma_bac_si"]
+            self.notebook, ma_bac_si=str(self.doctor["ma_bac_si"])
         )
-
         self.report_view = DoctorReportView(self.notebook)
         self.appointment_view = DoctorAppointmentView(self.notebook, doctor)
 
@@ -100,13 +97,15 @@ class DoctorReportView(ttk.Frame):
 
         self.include_empty = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            controls, text="Hiện bác sĩ không có lượt khám", variable=self.include_empty
+            controls,
+            text="Hiện bác sĩ không có lượt khám",
+            variable=self.include_empty,
         ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Button(controls, text="Xem thống kê", command=self._refresh).grid(
             row=1, column=7, sticky="e", pady=(8, 0)
         )
 
-        self.departments: dict[str, int | None] = {ALL_DEPARTMENTS: None}
+        self.departments: dict[str, int | str | None] = {ALL_DEPARTMENTS: None}
         self._load_departments()
 
         content_frame = ttk.Frame(self)
@@ -115,7 +114,6 @@ class DoctorReportView(ttk.Frame):
         content_frame.columnconfigure(1, weight=1)
         content_frame.rowconfigure(0, weight=1)
 
-        # -- BẢNG DỮ LIỆU BÊN TRÁI --
         table_frame = ttk.Frame(content_frame)
         table_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         table_frame.rowconfigure(0, weight=1)
@@ -138,15 +136,10 @@ class DoctorReportView(ttk.Frame):
                 "tong_gia_tri": 140,
             },
         )
-
-        # --- CĂN LỀ CHUẨN BÁO CÁO THỐNG KÊ ---
-        self.table.column("ma_bac_si", anchor="center")  # Mã -> Căn giữa
-        self.table.column("ten_bac_si", anchor="w")  # Tên -> Căn trái (mặc định)
-        self.table.column(
-            "so_luot_kham", anchor="center"
-        )  # Số lượng -> Căn giữa (hoặc phải)
-        self.table.column("tong_gia_tri", anchor="e")  # Tiền tệ -> Căn phải
-
+        self.table.column("ma_bac_si", anchor="center")
+        self.table.column("ten_bac_si", anchor="w")
+        self.table.column("so_luot_kham", anchor="center")
+        self.table.column("tong_gia_tri", anchor="e")
         self.table.grid(row=0, column=0, sticky="nsew")
         table_scroll = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -306,8 +299,68 @@ class DoctorReportView(ttk.Frame):
             y_offset += group_height
 
     def _export_pdf(self) -> None:
-        messagebox.showinfo(
-            "Thông báo",
-            "Tính năng xuất PDF đang chờ team APP-01 hoàn thiện API dùng chung.",
+        file_path = filedialog.asksaveasfilename(
             parent=self,
+            title="Lưu báo cáo thống kê bác sĩ",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"bao_cao_bac_si_{self.month.get()}_{self.year.get().strip()}.pdf",
         )
+        if not file_path:
+            return
+        try:
+            dieu_kien = (
+                f"Tháng {self.month.get()}/{self.year.get().strip()} | "
+                f"Khoa: {self.department.get()} | "
+                f"Từ khóa: {self.keyword.get().strip() or 'Tất cả'}"
+            )
+            cot = [
+                {"key": "ma_bac_si", "label": "Mã BS", "kind": "text"},
+                {"key": "ten_bac_si", "label": "Bác sĩ", "kind": "text"},
+                {"key": "ten_khoa", "label": "Khoa", "kind": "text"},
+                {"key": "so_luot_kham", "label": "Số lượt khám", "kind": "int"},
+                {"key": "tong_gia_tri", "label": "Tổng giá trị", "kind": "money"},
+            ]
+            pdf_rows = [
+                {
+                    "ma_bac_si": str(row["ma_bac_si"]),
+                    "ten_bac_si": str(row["ten_bac_si"]),
+                    "ten_khoa": str(row.get("ten_khoa", "—")),
+                    "so_luot_kham": int(row["so_luot_kham"]),
+                    "tong_gia_tri": Decimal(str(row["tong_gia_tri"] or 0)),
+                }
+                for row in self.rows
+            ]
+            tong_ket = {
+                "tong_so_luot_kham": sum(int(r["so_luot_kham"]) for r in self.rows),
+                "tong_gia_tri": sum(
+                    (Decimal(str(r["tong_gia_tri"] or 0)) for r in self.rows),
+                    Decimal("0"),
+                ),
+            }
+            valid_chart_rows = sorted(
+                [r for r in self.rows if Decimal(str(r["tong_gia_tri"] or 0)) > 0],
+                key=lambda x: Decimal(str(x["tong_gia_tri"])),
+                reverse=True,
+            )[:5]
+            bieu_do = [
+                {
+                    "label": f"{r['ma_bac_si']} - {r['ten_bac_si']}",
+                    "value": Decimal(str(r["tong_gia_tri"] or 0)),
+                }
+                for r in valid_chart_rows
+            ]
+            xuat_bang_pdf(
+                duong_dan=Path(file_path),
+                tieu_de="THỐNG KÊ KHÁM BỆNH THEO BÁC SĨ",
+                dieu_kien=dieu_kien,
+                cot=cot,
+                rows=pdf_rows,
+                tong_ket=tong_ket,
+                bieu_do=bieu_do or None,
+            )
+            messagebox.showinfo(
+                "Thành công", f"Đã xuất báo cáo PDF tại:\n{file_path}", parent=self
+            )
+        except Exception as error:
+            hien_loi(self, error)

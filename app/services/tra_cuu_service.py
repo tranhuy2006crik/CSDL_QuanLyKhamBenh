@@ -37,7 +37,6 @@ def _read(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]
             cursor.execute(sql, params or {})
             rows = cursor.fetchall()
 
-            # Tự động map lại các Tên Cột từ SQL sang đúng chuẩn biến cho UI
             for row in rows:
                 keys = list(row.keys())
                 for k in keys:
@@ -135,7 +134,6 @@ def lay_chi_tiet_lan_kham(ma_phieu: str) -> ChiTietLanKham:
     if not summary_rows:
         raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
 
-    # Bổ sung ép lấy trạng thái trực tiếp từ bảng PhieuKhamBenh nếu query tóm tắt thiếu
     status_query = "SELECT TrangThaiPhieuKham FROM PhieuKhamBenh WHERE MaPhieuKhamBenh = %(ma_phieu)s"
     real_status_rows = _read(status_query, {"ma_phieu": val_phieu})
     if real_status_rows:

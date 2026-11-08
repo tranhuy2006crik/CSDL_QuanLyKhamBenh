@@ -51,16 +51,14 @@ class PatientPortal(ttk.Frame):
 
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=1, column=0, sticky="nsew")
-        self.history_view = PatientHistoryView(
-            self.notebook, patient, self._open_visit
-        )
+        self.history_view = PatientHistoryView(self.notebook, patient, self._open_visit)
         self.appointment_view = PatientAppointmentView(self.notebook, patient)
         self.schedule_view = DoctorScheduleView(self.notebook)
         self.notebook.add(self.history_view, text="Hồ sơ bệnh án")
         self.notebook.add(self.appointment_view, text="Đặt lịch hẹn")
         self.notebook.add(self.schedule_view, text="Lịch làm việc bác sĩ")
 
-    def _open_visit(self, ma_phieu: int) -> None:
+    def _open_visit(self, ma_phieu: str) -> None:
         PhieuKhamDetailDialog(self, ma_phieu, read_only=True)
 
 
@@ -119,6 +117,14 @@ class PatientHistoryView(ttk.Frame):
                 "tong_chi_phi": 190,
             },
         )
+        # Sửa lại đúng tên các cột trong `columns` khớp với khai báo phía trên
+        self.table.column("stt", anchor="center", width=50)
+        self.table.column("ma_phieu", anchor="center", width=100)
+        self.table.column("ngay_gio", anchor="center", width=130)
+        self.table.column("bac_si", anchor="w", width=190)
+        self.table.column("khoa", anchor="w", width=155)
+        self.table.column("tong_chi_phi", anchor="e", width=190)
+
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -134,7 +140,9 @@ class PatientHistoryView(ttk.Frame):
             text="Xem chi tiết",
             command=self._open_selected,
         ).pack(side="left")
-        ttk.Button(actions, text="Tải lại", command=self._refresh).pack(side="left", padx=8)
+        ttk.Button(actions, text="Tải lại", command=self._refresh).pack(
+            side="left", padx=8
+        )
         ttk.Label(
             actions,
             text="Chỉ xem; chi phí là giá trị ghi nhận, không thể hiện trạng thái thanh toán.",
@@ -179,7 +187,7 @@ class PatientHistoryView(ttk.Frame):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if selection:
-            self.open_visit(int(selection[0]))
+            self.open_visit(str(selection[0]))
 
 
 class DoctorScheduleView(ttk.Frame):
@@ -199,9 +207,7 @@ class DoctorScheduleView(ttk.Frame):
         self.department.pack(side="left", padx=8)
         self.department.bind("<<ComboboxSelected>>", self._select_department)
         self.departments = {}
-        self.status = ttk.Label(
-            self, text="Chọn khoa để xem lịch làm việc theo tuần."
-        )
+        self.status = ttk.Label(self, text="Chọn khoa để xem lịch làm việc theo tuần.")
         self.status.grid(row=2, column=0, sticky="nw", pady=8)
         table_frame = ttk.Frame(self)
         table_frame.grid(row=3, column=0, sticky="nsew")
@@ -235,8 +241,7 @@ class DoctorScheduleView(ttk.Frame):
             hien_loi(self, error)
             return
         self.departments = {
-            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-            for row in rows
+            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"] for row in rows
         }
         self.department["values"] = list(self.departments)
 
