@@ -8,7 +8,10 @@ from app.services.appointment_service import (
     lich_theo_benh_nhan,
 )
 from app.services.clinic_service import lay_benh_nhan, lay_lich_su_benh_nhan
-from app.ui.views.appointment_views import PatientAppointmentView
+from app.ui.views.appointment_views import (
+    CancelAppointmentDialog,
+    PatientAppointmentView,
+)
 from app.ui.views.doctor_portal import DoctorPortal
 from app.ui.views.patient_portal import PatientPortal
 from app.ui.views.patient_portal import _format_work_time
@@ -61,8 +64,6 @@ class ClinicShellTests(unittest.TestCase):
                 "ma_khoa": 1,
             }
             with (
-                patch("app.ui.views.doctor_portal.lay_khoa", return_value=[]),
-                patch("app.ui.views.doctor_portal.lay_danh_sach_bac_si", return_value=[]),
                 patch("app.ui.views.doctor_portal.tim_kiem_benh_nhan", return_value=[]),
                 patch("app.ui.views.doctor_portal.bao_cao_bac_si", return_value=[]),
             ):
@@ -71,7 +72,39 @@ class ClinicShellTests(unittest.TestCase):
                 app.update_idletasks()
                 self.assertEqual(len(portal.notebook.tabs()), 3)
                 self.assertEqual(portal.grid_rowconfigure(1)["weight"], 1)
+                self.assertEqual(len(portal.appointment_view.card_lists), 3)
                 portal.destroy()
+        finally:
+            app.destroy()
+
+    def test_cancel_dialog_requires_reason_and_returns_submitted_reason(self) -> None:
+        app = ClinicApp(demo_mode=True)
+        try:
+            appointment = {
+                "ma_lich": 1,
+                "ma_benh_nhan": "BN001",
+                "ten_benh_nhan": "Bệnh nhân A",
+                "ma_bac_si": "BS001",
+                "ten_bac_si": "Bác sĩ A",
+                "ten_khoa": "Khoa Nội",
+                "bat_dau": datetime(2026, 11, 9, 8, 0),
+                "ket_thuc": datetime(2026, 11, 9, 8, 30),
+                "trang_thai": "CONFIRMED",
+                "da_an": False,
+                "ly_do_huy": None,
+                "ma_phieu_kham": None,
+                "tao_luc": datetime(2026, 11, 8, 8, 0),
+                "cap_nhat_luc": datetime(2026, 11, 8, 8, 0),
+            }
+            dialog = CancelAppointmentDialog(app, appointment)
+            app.update_idletasks()
+            dialog._submit()
+            self.assertIsNone(dialog.result)
+            self.assertTrue(dialog.winfo_exists())
+
+            dialog.reason.insert("1.0", "Thay đổi kế hoạch")
+            dialog._submit()
+            self.assertEqual(dialog.result, "Thay đổi kế hoạch")
         finally:
             app.destroy()
 
@@ -118,8 +151,7 @@ class ClinicShellTests(unittest.TestCase):
                 len(lay_lich_su_benh_nhan(DEMO_PATIENT_ID)), starting_visit_count
             )
 
-            view.table.selection_set(str(appointment["ma_lich"]))
-            view._appointment_selected()
+            view._select_appointment(str(appointment["ma_lich"]))
             next_available_day = next(
                 date.today() + timedelta(days=offset)
                 for offset in range(1, 31)
@@ -133,10 +165,9 @@ class ClinicShellTests(unittest.TestCase):
             appointment = lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]
             self.assertEqual(appointment["bat_dau"].date(), next_available_day)
 
-            view.table.selection_set(str(appointment["ma_lich"]))
-            view._appointment_selected()
+            view._select_appointment(str(appointment["ma_lich"]))
             with patch(
-                "app.ui.views.appointment_views.simpledialog.askstring",
+                "app.ui.views.appointment_views._ask_cancel_reason",
                 return_value="Thay đổi kế hoạch",
             ):
                 view._cancel()

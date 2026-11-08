@@ -49,6 +49,7 @@ class ClinicShell(ttk.Frame):
             text="BỆNH NHÂN\nNhập mã bệnh nhân",
             command=lambda: self._show_code_entry("patient"),
             width=32,
+            style="Primary.TButton",
         )
         self.patient_button.grid(row=2, column=0, padx=16, ipady=28, sticky="nsew")
         self.doctor_button = ttk.Button(
@@ -56,6 +57,7 @@ class ClinicShell(ttk.Frame):
             text="BÁC SĨ\nNhập mã bác sĩ",
             command=lambda: self._show_code_entry("doctor"),
             width=32,
+            style="Success.TButton",
         )
         self.doctor_button.grid(row=2, column=1, padx=16, ipady=28, sticky="nsew")
         ttk.Label(
@@ -74,7 +76,12 @@ class ClinicShell(ttk.Frame):
         screen.grid(row=0, column=0, sticky="nsew")
         screen.columnconfigure(0, weight=1)
         role_title = "Bệnh nhân" if role == "patient" else "Bác sĩ"
-        ttk.Button(screen, text="← Quay lại", command=self._show_home).grid(
+        ttk.Button(
+            screen,
+            text="← Quay lại",
+            command=self._show_home,
+            style="Secondary.TButton",
+        ).grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
@@ -92,6 +99,7 @@ class ClinicShell(ttk.Frame):
             screen,
             text="Tiếp tục",
             command=lambda: self._enter_portal(role, code.get()),
+            style="Primary.TButton",
         ).grid(row=4, column=0, pady=12)
         code.bind(
             "<Return>",
@@ -100,17 +108,34 @@ class ClinicShell(ttk.Frame):
         code.focus_set()
 
     def _enter_portal(self, role: str, raw_code: str) -> None:
-        try:
-            code = int(raw_code.strip())
-        except ValueError:
+        normalized = raw_code.strip().upper()
+        if not normalized:
             hien_loi(
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã định danh phải là số nguyên dương.",
+                    "Hãy nhập mã định danh.",
                 ),
             )
             return
+        if self.demo_mode and normalized.isdecimal():
+            code: str | int = int(normalized)
+        else:
+            expected_prefix = "BN" if role == "patient" else "BS"
+            if not normalized.startswith(expected_prefix):
+                hien_loi(
+                    self,
+                    AppError(
+                        "DU_LIEU_KHONG_HOP_LE",
+                        (
+                            "Mã bệnh nhân phải bắt đầu bằng BN."
+                            if role == "patient"
+                            else "Mã bác sĩ phải bắt đầu bằng BS."
+                        ),
+                    ),
+                )
+                return
+            code = normalized
         try:
             if role == "patient":
                 record = lay_benh_nhan(code)

@@ -72,3 +72,16 @@ def require_positive_int(value: Any, field: str, label: str) -> int:
             field,
         )
     return value
+
+
+def require_identifier(value: Any, field: str, label: str) -> str | int:
+    if isinstance(value, bool) or not (
+        isinstance(value, int) and value > 0
+        or isinstance(value, str) and value.strip()
+    ):
+        raise AppError(
+            "DU_LIEU_KHONG_HOP_LE",
+            f"{label} không hợp lệ.",
+            field,
+        )
+    return value.strip() if isinstance(value, str) else value

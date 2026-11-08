@@ -7,7 +7,7 @@ schema/seed; ứng dụng không tự tạo hoặc reset CSDL khi khởi động
 ## Bộ công nghệ đã chốt trong CSDL-01 v1.5
 
 - CPython 3.14.10 Windows x64, có Tcl/Tk và pip.
-- MySQL Community Server 8.4.13 LTS, InnoDB; CSDL `btl_csdl`.
+- MySQL Community Server 8.4.13 LTS, InnoDB; CSDL `quanlykhambenh`.
 - `mysql-connector-python==26.10.0`, `use_pure=True`.
 - `reportlab==4.4.10`; font Noto Sans và giấy phép SIL OFL đi kèm trong
   `assets/fonts/`.
@@ -27,6 +27,7 @@ app/
   db.py                             get_connection() dùng chung
   errors.py                         AppError và chuyển lỗi MySQL
   pdf_export.py                     Hàm xuat_bang_pdf() dùng chung
+  finalized_queries.py              Truy vấn tìm kiếm, thống kê, báo cáo, chốt phiếu
   read_queries.py                   SQL tham số hóa theo các bảng/cột ERD
   services/
     don_thuoc_service.py            Ghi đơn, trừ/hoàn tồn trong một transaction
@@ -42,10 +43,11 @@ app/
       doctor_portal.py              Tra cứu bệnh nhân và báo cáo bác sĩ
       appointment_views.py          Đặt lịch bệnh nhân và quản lý lịch bác sĩ
       visit_dialogs.py              Tạo phiếu, xem khám/xét nghiệm/đơn thuốc
+      styles.py                      Bảng màu và kiểu nút ttk
       common.py                     Bảng, định dạng tiền và hiển thị lỗi
 assets/fonts/                       NotoSans regular/bold và giấy phép
 scripts/smoke_db_gui.py             Tkinter đọc MySQL thật
-sql/                                Schema, view, seed, checks và migrations
+sql/                                Schema, triggers, seed và SQL nghiệp vụ nhóm
 tests/                              Kiểm thử tự động
 config.example.ini                  Mẫu cấu hình không có mật khẩu thật
 requirements.in                     Phụ thuộc trực tiếp
@@ -53,20 +55,18 @@ requirements.txt                    Bản khóa phụ thuộc đã cài/thử
 main.py                             Điểm khởi chạy
 ```
 
-Ứng dụng bắt đầu bằng lựa chọn vai trò bệnh nhân/bác sĩ. Bệnh nhân xem lịch sử
-phiếu khám của chính mã bệnh nhân, lịch làm việc tuần theo khoa và đặt/đổi/hủy
-lịch hẹn. Bác sĩ tra cứu bệnh nhân, quản lý lịch hẹn, mở hồ sơ, tạo phiếu khám,
-xem/cập nhật xét nghiệm, kê đơn trong ngữ cảnh phiếu và xem báo cáo theo bác sĩ.
+Ứng dụng có đúng ba tab mỗi vai trò. Bệnh nhân xem lịch sử phiếu khám của chính
+mã bệnh nhân, lịch làm việc tuần theo khoa và đặt/đổi/hủy lịch hẹn. Bác sĩ tra
+cứu bệnh nhân, quản lý lịch hẹn và xem báo cáo tháng; từ hồ sơ/lịch có thể tạo
+phiếu khám, xem/cập nhật xét nghiệm và kê đơn trong ngữ cảnh phiếu.
 Các truy vấn tổng chi phí tính riêng
 giá khám áp dụng, tổng đơn giá xét nghiệm và tổng `SoLuongKe * DonGiaApDung`
 của thuốc để tránh nhân lặp do join nhiều dòng chi tiết.
 
-Các truy vấn được viết theo tên bảng/cột trong ERD đã nhận, không phụ thuộc
-view tổng hợp chưa có trong repository. Tuy vậy, SQL schema thật chưa được bàn
-giao nên phải đối chiếu tên kiểu dữ liệu/nullability và chạy integration test
-với script nhóm trước khi dùng chung. `MaPhieuKhamBenh` được nhập thủ công vì
-ERD chưa nêu `AUTO_INCREMENT` hay quy tắc cấp mã; `STTXetNghiem` được cấp trong
-transaction sau khi khóa phiếu khám.
+Ứng dụng dùng schema và các SQL đã chốt trong `sql/`. Mã bệnh nhân, bác sĩ,
+thuốc, phiếu và đơn là chuỗi như `BN001`, `BS001`, `PK001`, không chuyển mã sang
+số. `MaPhieuKhamBenh` và `MaDonThuoc` được nhập theo quy ước cấp mã của nhóm;
+`STTXetNghiem` được cấp trong transaction sau khi khóa phiếu khám.
 
 Màn hình nhập mã bệnh nhân/bác sĩ chỉ phân luồng giao diện, không phải xác thực
 an toàn. Không dùng cho dữ liệu sức khỏe thật nếu chưa thêm cơ chế xác minh danh
@@ -77,13 +77,18 @@ thật dùng lịch làm việc trong MySQL và mã bệnh nhân/bác sĩ đã �
 demo dùng dữ liệu mẫu tách biệt. Lịch hẹn không tạo phiếu khám; phiếu chỉ được
 tạo khi bác sĩ thực hiện buổi khám.
 
-Lịch hẹn dùng slot 30 phút trong 30 ngày tới, xác nhận ngay khi đặt thành công,
-mỗi bệnh nhân tối đa một lịch hoạt động/ngày, và mỗi bác sĩ không có hai lịch
-chồng lấn trong cùng tiến trình. Lịch có thể đổi hoặc hủy trước giờ hẹn; hủy
-cần lý do. Bác sĩ có thể ghi nhận đã đến, tạo phiếu khám để hoàn tất, đánh dấu
-vắng mặt sau khi hết slot hoặc hủy lịch trước giờ hẹn. Giờ trống được tính từ
-lịch làm việc định kỳ; ngày nghỉ đột xuất/chặn lịch ngoài hệ thống chưa được
-mô hình hóa. Không có SMS/email nhắc lịch.
+Lịch hẹn dùng slot 30 phút trong 30 ngày tới. Màn hình bệnh nhân trình bày slot
+thành các ô màu: còn trống, đã đặt hoặc đã qua; lịch của bệnh nhân và bác sĩ
+hiển thị dạng thẻ có thể chọn. Bác sĩ có ba nhóm tab chờ khám, đã khám, đã hủy /
+vắng mặt. Lịch xác nhận ngay khi đặt thành công, mỗi bệnh nhân tối đa một lịch
+hoạt động/ngày, và mỗi bác sĩ không có hai lịch chồng lấn trong cùng tiến trình.
+Lịch có thể đổi hoặc hủy trước giờ hẹn; hủy cần lý do. Bác sĩ có thể ghi nhận
+đã đến, liên kết lịch với phiếu khám thật, và
+chỉ chuyển lịch sang “Đã khám” khi phiếu liên kết đã `HOAN_THANH`. Lịch đã xử
+lý có thể ẩn/hiện lại mà không xóa khỏi RAM hoặc ảnh hưởng kiểm tra trùng lịch.
+Bác sĩ chỉ đánh dấu vắng mặt sau khi hết slot; ứng dụng không tự hủy lịch quá
+giờ. Giờ trống được tính từ lịch làm việc định kỳ; ngày nghỉ đột xuất/chặn lịch
+ngoài hệ thống chưa được mô hình hóa. Không có SMS/email nhắc lịch.
 
 ## Cài đặt môi trường trên Windows
 
@@ -94,15 +99,16 @@ mô hình hóa. Không có SMS/email nhắc lịch.
    py -3.14 -m tkinter
    ```
 
-2. Cài MySQL Community Server 8.4.13 LTS x64. Bootstrap CSDL tạo tài khoản ứng
-   dụng `btl_app`; không cấu hình ứng dụng dùng tài khoản `root`.
+2. Cài MySQL Community Server 8.4.13 LTS x64. Tạo tài khoản ứng dụng riêng,
+   chỉ cấp quyền cần thiết trên `quanlykhambenh`; không cấu hình ứng dụng dùng
+   tài khoản `root`.
 
 3. Tạo virtual environment trong thư mục dự án và cài bản khóa:
 
    ```powershell
    py -3.14 -m venv .venv
-   ./.venv/Scripts/python.exe -m pip install -r requirements.txt
-   ./.venv/Scripts/python.exe -m pip check
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe -m pip check
    ```
 
 4. Sao chép mẫu cấu hình và chỉ sửa bản cục bộ:
@@ -117,29 +123,26 @@ mô hình hóa. Không có SMS/email nhắc lịch.
 
 ## Tạo CSDL demo
 
-Sau khi Đức/Hoàng bàn giao đủ script, mở MySQL CLI với tài khoản quản trị và
-chạy một lần theo thứ tự:
+Trên CSDL mới/rỗng, mở MySQL CLI với tài khoản quản trị và chạy một lần:
 
-```sql
-SOURCE <duong-dan-du-an>/sql/00_bootstrap.sql;
-SOURCE <duong-dan-du-an>/sql/01_schema.sql;
-SOURCE <duong-dan-du-an>/sql/02_views.sql;
-SOURCE <duong-dan-du-an>/sql/03_seed.sql;
-SOURCE <duong-dan-du-an>/sql/04_checks.sql;
-USE btl_csdl;
-SELECT VERSION(), DATABASE();
-SELECT MaKhoa, TenKhoa FROM Khoa ORDER BY MaKhoa LIMIT 3;
+```text
+SOURCE D:\duong-dan-du-an\sql\01_schema.sql;
+SOURCE D:\duong-dan-du-an\sql\02_triggers.sql;
+SOURCE D:\duong-dan-du-an\sql\seed.sql;
 ```
 
-Các script SQL trên hiện chưa được nhóm bàn giao trong repository; do đó chưa
-thể dựng/khôi phục CSDL demo hoặc xác nhận truy vấn thật. Không chạy lại seed
-trên CSDL đã có dữ liệu. Với thay đổi schema về sau, áp dụng migration cho
-CSDL cũ; không chạy migration cũ lên CSDL mới đã dựng từ schema hiện tại.
+`01_schema.sql` tạo CSDL `quanlykhambenh`; `02_triggers.sql` cài các trigger;
+`seed.sql` nạp dữ liệu giả lập và chỉ được chạy một lần trên CSDL mới. Tạo
+tài khoản ứng dụng trước khi nhập cấu hình. `00_drop_tables.sql` xóa toàn bộ
+bảng và dữ liệu — không chạy trên CSDL cần giữ. `03_business_logic.sql` và
+`04_search_statistics.sql` là tập hợp câu truy vấn mẫu, không chạy toàn file
+như script khởi tạo. Không thể xác nhận tích hợp MySQL thật nếu chưa chạy ứng
+dụng với CSDL đã dựng trên máy.
 
 ## Chạy ứng dụng và kiểm tra kết nối
 
 ```powershell
-./.venv/Scripts/python.exe main.py
+.\.venv\Scripts\python.exe main.py
 ```
 
 `main.py` tạo một Tk; sau khi chọn vai trò và nhập mã, ứng dụng hiển thị các tab
@@ -155,9 +158,10 @@ thoát ứng dụng. Chạy bằng cờ tường minh:
 .\.venv\Scripts\python.exe main.py --demo
 ```
 
-Tại màn hình chọn vai trò, dùng mã bệnh nhân `900001` hoặc `900002`, mã bác sĩ
-`900101` hoặc `900102`. Mã phiếu khám, mã đơn, thuốc và khoa mẫu cũng mang mã
-riêng thuộc dải `DEMO`; chỉ dùng để bấm thử, không sao chép vào CSDL thật.
+Trong chế độ demo, tại màn hình chọn vai trò dùng mã bệnh nhân `900001` hoặc
+`900002`, mã bác sĩ `900101` hoặc `900102`. Mã phiếu khám, mã đơn, thuốc và
+khoa mẫu cũng mang mã riêng thuộc dải `DEMO`; chỉ dùng để bấm thử, không sao
+chép vào CSDL thật. Khi kết nối CSDL thật, nhập mã dạng `BN...` hoặc `BS...`.
 Thanh tiêu đề và màn hình chọn vai trò hiển thị cảnh báo “DEMO OFFLINE”. Nếu
 MySQL lỗi khi chạy `main.py` bình thường, ứng dụng báo lỗi thay vì tự chuyển
 sang demo.
@@ -166,20 +170,22 @@ Khi đã có `config.ini`, schema và ít nhất một dòng Khoa, kiểm tra Tk
 dữ liệu MySQL thật:
 
 ```powershell
-./.venv/Scripts/python.exe scripts/smoke_db_gui.py
+.\.venv\Scripts\python.exe scripts/smoke_db_gui.py
 ```
 
 Đạt yêu cầu khi cửa sổ hiển thị phiên bản MySQL, tên CSDL và các dòng Khoa đọc
 từ bảng; đổi tên Khoa trong MySQL rồi bấm “Đọc lại MySQL” phải thấy giá trị mới.
-Hiện chưa có `config.ini`/schema dùng chung và chưa ghi nhận bằng chứng chạy,
-nên smoke test thật **chưa chạy**.
+Trong lần kiểm tra hiện tại, kết nối đọc và các API đọc danh mục/tìm kiếm/lịch
+làm việc/báo cáo đã chạy trên MySQL 8.0.46. CSDL có 10 bảng nhưng chưa có phiếu
+khám hoặc đơn thuốc; vì vậy các thao tác ghi giao dịch chưa được xác minh trên
+MySQL thật. Không tự tạo dữ liệu lâm sàng để thử trên CSDL dùng chung.
 
 ## Quy tắc giao diện và truy vấn theo ERD
 
-- Mỗi bệnh nhân có tối đa một hồ sơ bệnh án; lịch sử khám được truy vấn qua
-  `BenhNhan -> HoSoBenAn -> PhieuKhamBenh`.
-- Bộ lọc khoa/bác sĩ ở màn hình bác sĩ chỉ trả về bệnh nhân có phiếu khám phù
-  hợp; ứng dụng không tự thêm hồ sơ bệnh nhân.
+- Mỗi bệnh nhân có tối đa một hồ sơ bệnh án; lịch sử khám lấy từ
+  `BenhNhan -> HoSoBenhAn -> PhieuKhamBenh` và chỉ hiển thị phiếu đã hoàn thành.
+- Tìm kiếm bác sĩ hỗ trợ mã/tên/điện thoại, ngày sinh, giới tính và địa chỉ;
+  kết quả là dữ liệu bệnh nhân hiện có, không tự thêm hồ sơ.
 - Lịch bệnh nhân xem là lịch làm việc tuần trong `LichLamViecBacSi`, không phải
   dữ liệu giữ chỗ. Tab đặt lịch tạo giờ theo lịch làm việc nhưng giữ các lượt
   hẹn trong RAM; không thêm bảng vào ERD và không lưu vào MySQL.
@@ -188,7 +194,8 @@ nên smoke test thật **chưa chạy**.
   quả, giao diện yêu cầu ngày giờ thực hiện.
 - ERD hiện không có thuộc tính “Kết luận” riêng, nên màn hình dùng trường
   `ChanDoan` và không ghi vào cột không tồn tại.
-- Báo cáo đếm số phiếu khám/lượt khám theo từng bác sĩ trong kỳ. Tổng giá trị cộng
+- Báo cáo tháng đếm số phiếu khám/lượt khám theo từng bác sĩ trong kỳ và giữ
+  bác sĩ không có lượt khám. Tổng giá trị cộng
   chi phí các phiếu khám theo công thức đã thống nhất; không phải doanh thu đã
   thu vì lược đồ chưa có trạng thái thanh toán.
 
@@ -196,8 +203,11 @@ nên smoke test thật **chưa chạy**.
 
 - Tạo đơn cần mã đơn nhập tay; không dùng `AUTO_INCREMENT`, `lastrowid` hoặc
   sinh mã từ `MAX()+1`.
-- UI gửi toàn bộ danh sách thuốc nháp. Service đọc lại đơn và tồn dưới khóa
-  transaction; chỉ trừ phần chênh lệch khi sửa.
+- Đơn mới ghi ngày hiện tại; giao diện không cho sửa ngày lập.
+- UI gửi toàn bộ danh sách thuốc nháp. Service khóa phiếu/đơn/thuốc, xác nhận
+  phiếu còn `DANG_KHAM`, rồi cập nhật tồn và chi tiết trong một transaction.
+- Chỉ trừ/hoàn phần chênh lệch khi sửa; kiểm tra `rowcount`, rollback toàn bộ
+  nếu thiếu tồn hoặc một bước ghi thất bại.
 - Giá thuốc đã lưu được giữ nguyên; thuốc mới dùng giá danh mục lúc lưu.
 - Đầu đơn, dòng chi tiết và tồn cùng một transaction; lỗi trước commit rollback
   toàn bộ. Thuốc được khóa theo mã tăng dần; không retry ngầm.
@@ -206,20 +216,24 @@ nên smoke test thật **chưa chạy**.
 - Dữ liệu demo phải seed tồn cuối đã phản ánh các đơn mẫu, không gọi lại service
   để trừ tồn lần nữa.
 
-## Khôi phục bộ dữ liệu demo
+## Nạp dữ liệu giả lập
 
-Quy trình này chỉ dành cho CSDL demo mới/rỗng. Trước khi dựng lại, dừng ứng dụng
-và phiên ghi, xác nhận đúng CSDL cần khôi phục, sao lưu dữ liệu cần giữ; sau đó
-chạy bootstrap, schema, view, seed đúng một lần và checks. Đối chiếu kết quả
-seed đã được nhóm chốt: tồn thuốc 1 là 7, thuốc 2 là 6; tháng 10/2026 tổng
-390.000 VNĐ, tháng 11/2026 là 140.000 VNĐ, tổng năm 530.000 VNĐ. Những số liệu
-này là kỳ vọng tài liệu, chưa phải kết quả chạy hiện tại. Không sửa tay tồn để
-làm khớp con số; sửa bộ seed/SQL rồi khôi phục lại từ đầu.
+`seed.sql` chỉ dùng một lần trên schema mới/rỗng và chỉ nạp dữ liệu danh mục,
+bệnh nhân, bác sĩ, thuốc, khoa, hồ sơ và lịch làm việc. File không tạo phiếu
+khám, xét nghiệm hoặc đơn thuốc; vì vậy báo cáo tháng ban đầu có thể không có
+lượt khám. Không chạy lại seed trên CSDL đã có dữ liệu. `00_drop_tables.sql`
+xóa các bảng và dữ liệu, không dùng để “làm mới” một CSDL cần giữ.
 
-## Kiểm thử
+## PDF và kiểm thử
+
+Hai nút xuất PDF trong ứng dụng tạo báo cáo thống kê tháng và báo cáo kết quả
+khám. Tệp được lưu theo đường dẫn người dùng chọn, dùng font Noto Sans đã kèm
+trong `assets/fonts/`. Bộ test xác minh dữ liệu tiếng Việt, dữ liệu tổng hợp và
+PDF chi tiết; các file mẫu minh họa cần được nhận diện là dữ liệu giả lập, không
+phải hồ sơ MySQL.
 
 ```powershell
-./.venv/Scripts/python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Kiểm thử tự động không thay thế các ca nghiệm thu MySQL TON-01..TON-14. Các ca

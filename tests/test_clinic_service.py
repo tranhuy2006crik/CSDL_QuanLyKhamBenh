@@ -4,8 +4,8 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 from app.errors import AppError
+from app.finalized_queries import Q_MONTHLY_DOCTOR_STATISTICS
 from app.read_queries import (
-    Q_BAO_CAO_BAC_SI,
     Q_INSERT_PHIEU_KHAM,
     Q_INSERT_XET_NGHIEM,
     Q_LICH_SU_BENH_NHAN,
@@ -15,6 +15,7 @@ from app.services.clinic_service import (
     lay_lich_lam_viec,
     luu_xet_nghiem,
     tao_phieu_kham,
+    xoa_phieu_dang_kham,
 )
 
 
@@ -28,23 +29,25 @@ class ClinicServiceTests(unittest.TestCase):
         self.assertNotIn("v_tong_hop_lan_kham", normalized)
 
     def test_report_counts_visit_records_and_includes_cost_components(self) -> None:
-        normalized = " ".join(Q_BAO_CAO_BAC_SI.split())
+        normalized = " ".join(Q_MONTHLY_DOCTOR_STATISTICS.split())
         self.assertIn("COUNT(p.MaPhieuKhamBenh)", normalized)
-        self.assertIn("pk.GiaKhamApDung", normalized)
+        self.assertIn("p.GiaKhamApDung", normalized)
         self.assertIn("SUM(DonGiaApDung)", normalized)
-        self.assertIn("SUM(c.SoLuongKe * c.DonGiaApDung)", normalized)
+        self.assertIn("SUM(ct.SoLuongKe * ct.DonGiaApDung)", normalized)
+        self.assertIn("p.TrangThaiPhieuKham = 'HOAN_THANH'", normalized)
 
-    def test_report_uses_half_open_month_range_and_filters(self) -> None:
-        with patch("app.services.clinic_service._read", return_value=[]) as read:
-            bao_cao_bac_si(12, 2026, ma_khoa=3, tu_khoa="An", hien_bac_si_rong=False)
+    def test_report_uses_finalized_month_and_year_parameters(self) -> None:
+        connection = Mock()
+        cursor = Mock()
+        connection.cursor.return_value = cursor
+        cursor.fetchall.return_value = []
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            bao_cao_bac_si(12, 2026)
 
-        query, params = read.call_args.args
-        self.assertEqual(query, Q_BAO_CAO_BAC_SI)
-        self.assertEqual(params["tu_ngay"].isoformat(), "2026-12-01")
-        self.assertEqual(params["den_ngay"].isoformat(), "2027-01-01")
-        self.assertEqual(params["ma_khoa"], 3)
-        self.assertEqual(params["mau_tim"], "%An%")
-        self.assertEqual(params["hien_bac_si_rong"], 0)
+        cursor.execute.assert_called_once_with(Q_MONTHLY_DOCTOR_STATISTICS, (12, 2026))
+        connection.close.assert_called_once()
 
     def test_schedule_is_sorted_by_weekday_and_start_time(self) -> None:
         rows = [
@@ -118,7 +121,10 @@ class ClinicServiceTests(unittest.TestCase):
         connection = Mock()
         cursor = Mock()
         connection.cursor.return_value = cursor
-        cursor.fetchone.side_effect = [{"MaPhieuKhamBenh": 1001}, {"stt": 2}]
+        cursor.fetchone.side_effect = [
+            {"trang_thai": "DANG_KHAM"},
+            {"stt": 2},
+        ]
         with patch(
             "app.services.clinic_service.get_connection", return_value=connection
         ):
@@ -147,6 +153,65 @@ class ClinicServiceTests(unittest.TestCase):
                     Decimal("100000"),
                 )
         get_connection.assert_not_called()
+
+    def test_delete_in_progress_visit_checks_each_dependent_row_count(self) -> None:
+        connection, cursor = self._delete_visit_connection(stock_rows=1)
+
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            xoa_phieu_dang_kham("PK001", "BS001")
+
+        self.assertEqual(cursor.execute.call_count, 8)
+        connection.commit.assert_called_once()
+        connection.rollback.assert_not_called()
+        connection.close.assert_called_once()
+
+    def test_delete_in_progress_visit_rolls_back_if_inventory_refund_is_incomplete(
+        self,
+    ) -> None:
+        connection, _cursor = self._delete_visit_connection(stock_rows=0)
+
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            with self.assertRaises(AppError) as raised:
+                xoa_phieu_dang_kham("PK001", "BS001")
+
+        self.assertEqual(raised.exception.code, "XUNG_DOT_DU_LIEU")
+        connection.commit.assert_not_called()
+        connection.rollback.assert_called_once()
+        connection.close.assert_called_once()
+
+    @staticmethod
+    def _delete_visit_connection(stock_rows: int) -> tuple[Mock, Mock]:
+        connection = Mock()
+        cursor = Mock()
+        connection.cursor.return_value = cursor
+        cursor.fetchone.return_value = {
+            "ma_bac_si": "BS001",
+            "trang_thai": "DANG_KHAM",
+        }
+        cursor.fetchall.side_effect = [
+            [{"MaDonThuoc": "DT001"}],
+            [{"MaThuoc": "T001"}],
+        ]
+
+        def execute(sql: str, _params: object) -> None:
+            normalized = " ".join(sql.split())
+            if normalized.startswith("UPDATE Thuoc"):
+                cursor.rowcount = stock_rows
+            elif normalized.startswith("DELETE ct"):
+                cursor.rowcount = 1
+            elif normalized.startswith("DELETE d"):
+                cursor.rowcount = 1
+            elif normalized.startswith("DELETE x"):
+                cursor.rowcount = 0
+            elif normalized.startswith("DELETE FROM PhieuKhamBenh"):
+                cursor.rowcount = 1
+
+        cursor.execute.side_effect = execute
+        return connection, cursor
 
 
 if __name__ == "__main__":

@@ -46,20 +46,31 @@ class FakeCursor:
             state["orders"][order_id] = {
                 "ma_don": order_id,
                 "ma_phieu": params["ma_phieu"],
-                "ngay_lap": params["ngay_lap"],
+                "ngay_lap": date.today(),
                 "loi_dan": params["loi_dan"],
             }
             state["details"][order_id] = {}
             self.rowcount = 1
         elif sql == service.Q_UPDATE_DON:
             order = state["orders"][params["ma_don"]]
-            order["ngay_lap"] = params["ngay_lap"]
             order["loi_dan"] = params["loi_dan"]
             self.rowcount = 1
         elif sql == service.Q_DELETE_CHI_TIET:
+            self.rowcount = len(state["details"][params["ma_don"]])
             state["details"][params["ma_don"]] = {}
-            self.rowcount = 1
         elif sql == service.Q_INSERT_CHI_TIET:
+            order_lines = state["details"][params["ma_don"]]
+            medicine_id = params["ma_thuoc"]
+            if medicine_id in order_lines:
+                raise RuntimeError("duplicate medicine in order")
+            order_lines[medicine_id] = {
+                "ma_thuoc": medicine_id,
+                "so_luong_ke": params["so_luong_ke"],
+                "cach_dung": params["cach_dung"],
+                "don_gia_ap_dung": state["medicines"][medicine_id]["don_gia"],
+            }
+            self.rowcount = 1
+        elif sql == service.Q_INSERT_CHI_TIET_HISTORICAL_PRICE:
             order_lines = state["details"][params["ma_don"]]
             medicine_id = params["ma_thuoc"]
             if medicine_id in order_lines:
@@ -71,6 +82,10 @@ class FakeCursor:
                 "don_gia_ap_dung": params["don_gia"],
             }
             self.rowcount = 1
+        elif sql == service.Q_COUNT_CHI_TIET:
+            self.result_one = {
+                "so_dong": len(state["details"][params["ma_don"]])
+            }
         elif sql == service.Q_TRU_TON:
             medicine = state["medicines"][params["ma_thuoc"]]
             quantity = params["so_luong"]
@@ -147,7 +162,10 @@ class FakeConnection:
 def create_state() -> dict:
     return {
         "appointments": {
-            1: {"ngay_gio_kham": datetime(2026, 10, 30, 9, 0)}
+            1: {
+                "ngay_gio_kham": datetime(2026, 10, 30, 9, 0),
+                "trang_thai": "DANG_KHAM",
+            }
         },
         "orders": {},
         "details": {},

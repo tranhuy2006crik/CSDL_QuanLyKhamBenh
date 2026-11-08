@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from app.pdf_export import xuat_bang_pdf
+from app.pdf_export import xuat_bang_pdf, xuat_bao_cao_phieu_kham_pdf
 
 
 class PdfExportTests(unittest.TestCase):
@@ -48,6 +48,61 @@ class PdfExportTests(unittest.TestCase):
                 bieu_do=[{"label": "Nguyễn Văn A", "value": Decimal("125000")}],
             )
             self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
+
+    def test_exports_vietnamese_visit_report_with_completed_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "ket_qua_kham.pdf"
+            xuat_bao_cao_phieu_kham_pdf(
+                output_path,
+                {
+                    "thong_tin": {
+                        "ma_benh_nhan": "BN001",
+                        "ho_ten": "Nguyễn Thị Ánh",
+                        "ngay_sinh": date(1990, 3, 5),
+                        "so_dien_thoai": None,
+                        "ma_phieu": "PK001",
+                        "ngay_gio_kham": datetime(2026, 10, 30, 9, 0),
+                        "bac_si": "Bác sĩ Nguyễn Văn A",
+                        "trieu_chung": "Đau đầu",
+                        "chan_doan": "Viêm xoang",
+                    },
+                    "ds_xet_nghiem": [
+                        {
+                            "stt": 1,
+                            "ten_xet_nghiem": "Công thức máu",
+                            "ket_qua": "Bình thường",
+                            "ngay_gio_thuc_hien": datetime(2026, 10, 30, 9, 30),
+                            "don_gia_ap_dung": Decimal("90000"),
+                        }
+                    ],
+                    "loi_dan": [
+                        {
+                            "ngay_lap": date(2026, 10, 30),
+                            "loi_dan": "Tái khám sau một tuần",
+                        }
+                    ],
+                    "ds_thuoc": [
+                        {
+                            "ten_thuoc": "Thuốc giảm đau",
+                            "so_luong_ke": 2,
+                            "don_vi_tinh": "viên",
+                            "cach_dung": "Uống sau ăn",
+                            "don_gia_ap_dung": Decimal("10000"),
+                            "thanh_tien": Decimal("20000"),
+                        }
+                    ],
+                    "tong_chi_phi": {
+                        "gia_kham": Decimal("150000"),
+                        "gia_xet_nghiem": Decimal("90000"),
+                        "gia_thuoc": Decimal("20000"),
+                        "tong_chi_phi": Decimal("260000"),
+                    },
+                },
+            )
+
+            data = output_path.read_bytes()
+            self.assertTrue(data.startswith(b"%PDF-"))
+            self.assertIn(b"NotoSans", data)
 
     def test_rejects_missing_column_value(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

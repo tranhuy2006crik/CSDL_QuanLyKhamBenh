@@ -12,17 +12,28 @@ from app.contracts import (
     BacSiChiTietDTO,
     BacSiDTO,
     BenhNhanDTO,
+    Identifier,
     KhoaDTO,
     LichLamViecDTO,
     LichSuKhamRow,
 )
 from app.demo_data import demo_data, is_demo_mode
 from app.db import get_connection
-from app.errors import AppError, app_error_from_database, require_positive_int
+from app.errors import (
+    AppError,
+    app_error_from_database,
+    require_identifier,
+    require_positive_int,
+)
+from app.finalized_queries import (
+    Q_COMPLETE_VISIT,
+    Q_FIND_IN_PROGRESS_VISIT,
+    Q_MONTHLY_DOCTOR_STATISTICS,
+    Q_SEARCH_PATIENTS,
+)
 from app.read_queries import (
     Q_BAC_SI,
     Q_BAC_SI_THEO_MA,
-    Q_BAO_CAO_BAC_SI,
     Q_BENH_NHAN_THEO_MA,
     Q_INSERT_PHIEU_KHAM,
     Q_INSERT_XET_NGHIEM,
@@ -35,14 +46,12 @@ from app.read_queries import (
     Q_LOCK_PHIEU_KHAM,
     Q_LOCK_XET_NGHIEM,
     Q_NEXT_STT_XET_NGHIEM,
-    Q_TIM_BENH_NHAN,
     Q_UPDATE_NOI_DUNG_KHAM,
     Q_UPDATE_XET_NGHIEM,
 )
 
 
 logger = logging.getLogger(__name__)
-MAX_SQL_UNSIGNED_INT = 4_294_967_295
 
 
 def _read(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -72,24 +81,24 @@ def lay_khoa() -> list[KhoaDTO]:
     return cast(list[KhoaDTO], _read(Q_KHOA))
 
 
-def lay_danh_sach_bac_si(ma_khoa: int | None = None) -> list[BacSiDTO]:
+def lay_danh_sach_bac_si(ma_khoa: Identifier | None = None) -> list[BacSiDTO]:
     if ma_khoa is not None:
-        require_positive_int(ma_khoa, "ma_khoa", "Mã khoa")
+        require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
     if is_demo_mode():
         return cast(list[BacSiDTO], demo_data().list_doctors(ma_khoa))
     return cast(list[BacSiDTO], _read(Q_BAC_SI, {"ma_khoa": ma_khoa}))
 
 
-def lay_bac_si(ma_bac_si: int) -> BacSiChiTietDTO | None:
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+def lay_bac_si(ma_bac_si: Identifier) -> BacSiChiTietDTO | None:
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if is_demo_mode():
         return cast(BacSiChiTietDTO | None, demo_data().get_doctor(ma_bac_si))
     row = _get_one(Q_BAC_SI_THEO_MA, {"ma_bac_si": ma_bac_si})
     return cast(BacSiChiTietDTO | None, row)
 
 
-def lay_benh_nhan(ma_benh_nhan: int) -> BenhNhanDTO | None:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+def lay_benh_nhan(ma_benh_nhan: Identifier) -> BenhNhanDTO | None:
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     if is_demo_mode():
         return cast(BenhNhanDTO | None, demo_data().get_patient(ma_benh_nhan))
     row = _get_one(Q_BENH_NHAN_THEO_MA, {"ma_benh_nhan": ma_benh_nhan})
@@ -98,30 +107,65 @@ def lay_benh_nhan(ma_benh_nhan: int) -> BenhNhanDTO | None:
 
 def tim_kiem_benh_nhan(
     tu_khoa: str = "",
-    ma_khoa: int | None = None,
-    ma_bac_si: int | None = None,
+    ngay_sinh: date | None = None,
+    gioi_tinh: str | None = None,
+    dia_chi: str = "",
 ) -> list[BenhNhanDTO]:
-    if ma_khoa is not None:
-        require_positive_int(ma_khoa, "ma_khoa", "Mã khoa")
-    if ma_bac_si is not None:
-        require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     keyword = tu_khoa.strip()
-    params = {
-        "tu_khoa": keyword,
-        "mau_tim": f"%{keyword}%",
-        "ma_khoa": ma_khoa,
-        "ma_bac_si": ma_bac_si,
-    }
+    if ngay_sinh is not None and (
+        isinstance(ngay_sinh, datetime) or not isinstance(ngay_sinh, date)
+    ):
+        raise AppError("DU_LIEU_KHONG_HOP_LE", "Ngày sinh không hợp lệ.", "ngay_sinh")
+    if gioi_tinh and gioi_tinh.upper() not in {"NAM", "NU", "KHAC"}:
+        raise AppError("DU_LIEU_KHONG_HOP_LE", "Giới tính không hợp lệ.", "gioi_tinh")
+    address = dia_chi.strip()
     if is_demo_mode():
+        rows = demo_data().search_patients(keyword, None, None)
         return cast(
             list[BenhNhanDTO],
-            demo_data().search_patients(keyword, ma_khoa, ma_bac_si),
+            [
+                row
+                for row in rows
+                if (ngay_sinh is None or row["ngay_sinh"] == ngay_sinh)
+                and (not gioi_tinh or (row["gioi_tinh"] or "").upper() == gioi_tinh.upper())
+                and address.casefold() in (row["dia_chi"] or "").casefold()
+            ],
         )
-    return cast(list[BenhNhanDTO], _read(Q_TIM_BENH_NHAN, params))
+    connection = get_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                Q_SEARCH_PATIENTS,
+                (keyword, keyword, keyword, ngay_sinh, gioi_tinh, address),
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+    except mysql.connector.Error as error:
+        logger.exception("Patient search query failed")
+        raise app_error_from_database(error) from error
+    finally:
+        connection.close()
+    return cast(
+        list[BenhNhanDTO],
+        [
+            {
+                "ma_benh_nhan": row["MaBenhNhan"],
+                "ho_ten": row["HoTen"],
+                "ngay_sinh": row["NgaySinh"],
+                "nam_sinh": row["NgaySinh"].year if row["NgaySinh"] else None,
+                "gioi_tinh": row["GioiTinh"],
+                "dia_chi": row["DiaChi"],
+                "so_dien_thoai": row["SoDienThoai"],
+            }
+            for row in rows
+        ],
+    )
 
 
-def lay_lich_su_benh_nhan(ma_benh_nhan: int) -> list[LichSuKhamRow]:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+def lay_lich_su_benh_nhan(ma_benh_nhan: Identifier) -> list[LichSuKhamRow]:
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     if is_demo_mode():
         return cast(list[LichSuKhamRow], demo_data().history(ma_benh_nhan))
     return cast(
@@ -130,8 +174,8 @@ def lay_lich_su_benh_nhan(ma_benh_nhan: int) -> list[LichSuKhamRow]:
     )
 
 
-def lay_tien_su_benh(ma_benh_nhan: int) -> str | None:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+def lay_tien_su_benh(ma_benh_nhan: Identifier) -> str | None:
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     if is_demo_mode():
         return demo_data().medical_history(ma_benh_nhan)
     row = _get_one(Q_HO_SO_BENH_AN, {"ma_benh_nhan": ma_benh_nhan})
@@ -140,8 +184,8 @@ def lay_tien_su_benh(ma_benh_nhan: int) -> str | None:
     return row["tien_su_benh"]
 
 
-def _weekday_order(value: str) -> tuple[int, str]:
-    normalized = value.strip().casefold().replace("đ", "d")
+def _weekday_order(value: str | int) -> tuple[int, str]:
+    normalized = str(value).strip().casefold().replace("đ", "d")
     aliases = (
         ("thu hai", "thứ hai", "thu 2", "thứ 2", "t2", "monday", "2"),
         ("thu ba", "thứ ba", "thu 3", "thứ 3", "t3", "tuesday", "3"),
@@ -163,8 +207,8 @@ def _time_order(value: time | timedelta) -> float:
     return value.hour * 3600 + value.minute * 60 + value.second
 
 
-def lay_lich_lam_viec(ma_khoa: int) -> list[LichLamViecDTO]:
-    require_positive_int(ma_khoa, "ma_khoa", "Mã khoa")
+def lay_lich_lam_viec(ma_khoa: Identifier) -> list[LichLamViecDTO]:
+    require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
     if is_demo_mode():
         rows = cast(
             list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa)
@@ -194,54 +238,52 @@ def lay_lich_lam_viec(ma_khoa: int) -> list[LichLamViecDTO]:
 def bao_cao_bac_si(
     thang: int,
     nam: int,
-    ma_khoa: int | None = None,
-    tu_khoa: str = "",
-    hien_bac_si_rong: bool = True,
 ) -> list[BaoCaoBacSiRow]:
     if isinstance(thang, bool) or not isinstance(thang, int) or not 1 <= thang <= 12:
         raise AppError("DU_LIEU_KHONG_HOP_LE", "Tháng phải từ 1 đến 12.", "thang")
-    if isinstance(nam, bool) or not isinstance(nam, int) or not 1 <= nam <= 9999:
+    if isinstance(nam, bool) or not isinstance(nam, int) or not 1 <= nam <= 9998:
         raise AppError("DU_LIEU_KHONG_HOP_LE", "Năm không hợp lệ.", "nam")
-    if ma_khoa is not None:
-        require_positive_int(ma_khoa, "ma_khoa", "Mã khoa")
-    if not isinstance(hien_bac_si_rong, bool):
-        raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            "Tùy chọn hiển thị bác sĩ không có lượt khám không hợp lệ.",
-        )
 
     start = date(nam, thang, 1)
     end = date(nam + (thang == 12), 1 if thang == 12 else thang + 1, 1)
-    keyword = tu_khoa.strip()
     if is_demo_mode():
         return cast(
             list[BaoCaoBacSiRow],
-            demo_data().report(start, end, ma_khoa, keyword, hien_bac_si_rong),
+            demo_data().report(start, end, None, "", True),
         )
+    connection = get_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(Q_MONTHLY_DOCTOR_STATISTICS, (thang, nam))
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+    except mysql.connector.Error as error:
+        logger.exception("Monthly doctor statistics query failed")
+        raise app_error_from_database(error) from error
+    finally:
+        connection.close()
     return cast(
         list[BaoCaoBacSiRow],
-        _read(
-            Q_BAO_CAO_BAC_SI,
+        [
             {
-                "tu_ngay": start,
-                "den_ngay": end,
-                "ma_khoa": ma_khoa,
-                "tu_khoa": keyword,
-                "mau_tim": f"%{keyword}%",
-                "hien_bac_si_rong": int(hien_bac_si_rong),
-            },
-        ),
+                "ma_bac_si": row["MaBacSi"],
+                "ten_bac_si": row["TenBacSi"],
+                "so_luot_kham": row["SoLuotKham"],
+                "so_benh_nhan": row["SoBenhNhan"],
+                "gia_kham": row["TongTienKham"],
+                "gia_xet_nghiem": row["TongTienXetNghiem"],
+                "gia_thuoc": row["TongTienThuoc"],
+                "tong_gia_tri": row["TongGiaTriKham"],
+            }
+            for row in rows
+        ],
     )
 
 
-def _validate_id(value: int, field: str, label: str) -> None:
-    require_positive_int(value, field, label)
-    if value > MAX_SQL_UNSIGNED_INT:
-        raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            f"{label} vượt phạm vi INT UNSIGNED.",
-            field,
-        )
+def _validate_id(value: Identifier, field: str, label: str) -> None:
+    require_identifier(value, field, label)
 
 
 def _rollback(connection: MySQLConnection) -> None:
@@ -273,9 +315,9 @@ def _clean_optional_text(value: str | None, field: str, label: str) -> str | Non
 
 
 def tao_phieu_kham(
-    ma_phieu: int,
-    ma_benh_nhan: int,
-    ma_bac_si: int,
+    ma_phieu: Identifier,
+    ma_benh_nhan: Identifier,
+    ma_bac_si: Identifier,
     trieu_chung: str | None,
     chan_doan: str | None,
 ) -> None:
@@ -359,7 +401,7 @@ def tao_phieu_kham(
 
 
 def luu_noi_dung_kham(
-    ma_phieu: int,
+    ma_phieu: Identifier,
     trieu_chung: str | None,
     chan_doan: str | None,
 ) -> None:
@@ -383,8 +425,13 @@ def luu_noi_dung_kham(
         connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
         cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
-        if cursor.fetchone() is None:
+        locked_visit = cursor.fetchone()
+        if locked_visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if locked_visit["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành và chỉ được xem."
+            )
         cursor.execute(Q_UPDATE_NOI_DUNG_KHAM, params)
         commit_attempted = True
         connection.commit()
@@ -414,7 +461,7 @@ def luu_noi_dung_kham(
 
 
 def luu_xet_nghiem(
-    ma_phieu: int,
+    ma_phieu: Identifier,
     ten_xet_nghiem: str,
     ket_qua: str | None,
     ngay_gio_thuc_hien: datetime | None,
@@ -423,7 +470,7 @@ def luu_xet_nghiem(
 ) -> int:
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
     if stt is not None:
-        _validate_id(stt, "stt", "STT xét nghiệm")
+        require_positive_int(stt, "stt", "STT xét nghiệm")
     name = ten_xet_nghiem.strip() if isinstance(ten_xet_nghiem, str) else ""
     if not name:
         raise AppError(
@@ -473,8 +520,14 @@ def luu_xet_nghiem(
         connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
         cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
-        if cursor.fetchone() is None:
+        locked_visit = cursor.fetchone()
+        if locked_visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if locked_visit["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể thay đổi xét nghiệm của phiếu đã hoàn thành.",
+            )
         if stt is None:
             cursor.execute(Q_NEXT_STT_XET_NGHIEM, {"ma_phieu": ma_phieu})
             row = cursor.fetchone()
@@ -541,6 +594,207 @@ def luu_xet_nghiem(
                 ),
             ) from error
         _rollback(connection)
+        raise
+    finally:
+        _close_transaction(cursor, connection)
+
+
+def tim_phieu_dang_kham(
+    ma_benh_nhan: Identifier, ma_bac_si: Identifier
+) -> Identifier | None:
+    _validate_id(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+    _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    if is_demo_mode():
+        return demo_data().find_in_progress_visit(ma_benh_nhan, ma_bac_si)
+    row = _get_one(
+        Q_FIND_IN_PROGRESS_VISIT,
+        {"ma_benh_nhan": ma_benh_nhan, "ma_bac_si": ma_bac_si},
+    )
+    return row["ma_phieu"] if row else None
+
+
+def hoan_thanh_phieu_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
+    _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
+    _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    if is_demo_mode():
+        demo_data().complete_visit(ma_phieu, ma_bac_si)
+        return
+    connection = get_connection()
+    cursor: MySQLCursorDict | None = None
+    commit_attempted = False
+    try:
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
+        visit = cursor.fetchone()
+        if visit is None:
+            raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if visit["ma_bac_si"] != ma_bac_si:
+            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError("PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành.")
+        cursor.execute(Q_COMPLETE_VISIT, (ma_phieu, ma_phieu))
+        if cursor.rowcount != 1:
+            raise AppError(
+                "CHUA_DU_DIEU_KIEN_HOAN_THANH",
+                "Cần có chẩn đoán và hoàn tất toàn bộ kết quả xét nghiệm trước khi chốt phiếu.",
+            )
+        commit_attempted = True
+        connection.commit()
+    except AppError:
+        if not commit_attempted:
+            _rollback(connection)
+        raise
+    except mysql.connector.Error as error:
+        if commit_attempted:
+            raise AppError(
+                "COMMIT_CHUA_XAC_DINH",
+                "Chưa xác định được kết quả chốt phiếu. Hãy tải lại phiếu khám.",
+            ) from error
+        _rollback(connection)
+        logger.exception("Could not complete consultation %s", ma_phieu)
+        raise app_error_from_database(error, Q_COMPLETE_VISIT) from error
+    except Exception:
+        if not commit_attempted:
+            _rollback(connection)
+        raise
+    finally:
+        _close_transaction(cursor, connection)
+
+
+def xoa_phieu_dang_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
+    _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
+    _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    if is_demo_mode():
+        demo_data().delete_in_progress_visit(ma_phieu, ma_bac_si)
+        return
+
+    connection = get_connection()
+    cursor: MySQLCursorDict | None = None
+    commit_attempted = False
+    try:
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
+        visit = cursor.fetchone()
+        if visit is None:
+            raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if visit["ma_bac_si"] != ma_bac_si:
+            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được xóa phiếu.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError("PHIEU_DA_HOAN_THANH", "Không thể xóa phiếu đã hoàn thành.")
+
+        cursor.execute(
+            """
+            SELECT MaDonThuoc
+            FROM DonThuoc
+            WHERE MaPhieuKhamBenh = %s
+            FOR UPDATE
+            """,
+            (ma_phieu,),
+        )
+        order_count = len(cursor.fetchall())
+        cursor.execute(
+            """
+            SELECT ct.MaThuoc
+            FROM ChiTietDonThuoc ct
+            JOIN DonThuoc d ON ct.MaDonThuoc = d.MaDonThuoc
+            WHERE d.MaPhieuKhamBenh = %s
+            FOR UPDATE
+            """,
+            (ma_phieu,),
+        )
+        detail_count = len(cursor.fetchall())
+
+        cursor.execute(
+            """
+            UPDATE Thuoc t
+            JOIN ChiTietDonThuoc ct ON t.MaThuoc = ct.MaThuoc
+            JOIN DonThuoc d ON ct.MaDonThuoc = d.MaDonThuoc
+            JOIN PhieuKhamBenh p ON d.MaPhieuKhamBenh = p.MaPhieuKhamBenh
+            SET t.SoLuongCoSan = t.SoLuongCoSan + ct.SoLuongKe
+            WHERE p.MaPhieuKhamBenh = %s
+              AND p.TrangThaiPhieuKham = 'DANG_KHAM'
+            """,
+            (ma_phieu,),
+        )
+        if cursor.rowcount != detail_count:
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Không thể hoàn đủ tồn kho của phiếu. Hãy tải lại trước khi xóa.",
+            )
+
+        cursor.execute(
+            """
+            DELETE ct FROM ChiTietDonThuoc ct
+            JOIN DonThuoc d ON ct.MaDonThuoc = d.MaDonThuoc
+            JOIN PhieuKhamBenh p ON d.MaPhieuKhamBenh = p.MaPhieuKhamBenh
+            WHERE p.MaPhieuKhamBenh = %s
+              AND p.TrangThaiPhieuKham = 'DANG_KHAM'
+            """,
+            (ma_phieu,),
+        )
+        if cursor.rowcount != detail_count:
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Không xóa đủ chi tiết đơn thuốc. Hãy tải lại trước khi xóa.",
+            )
+
+        cursor.execute(
+            """
+            DELETE d FROM DonThuoc d
+            JOIN PhieuKhamBenh p ON d.MaPhieuKhamBenh = p.MaPhieuKhamBenh
+            WHERE p.MaPhieuKhamBenh = %s
+              AND p.TrangThaiPhieuKham = 'DANG_KHAM'
+            """,
+            (ma_phieu,),
+        )
+        if cursor.rowcount != order_count:
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Không xóa đủ đơn thuốc. Hãy tải lại trước khi xóa.",
+            )
+
+        cursor.execute(
+            """
+            DELETE x FROM XetNghiem x
+            JOIN PhieuKhamBenh p ON x.MaPhieuKhamBenh = p.MaPhieuKhamBenh
+            WHERE p.MaPhieuKhamBenh = %s
+              AND p.TrangThaiPhieuKham = 'DANG_KHAM'
+            """,
+            (ma_phieu,),
+        )
+        cursor.execute(
+            """
+            DELETE FROM PhieuKhamBenh
+            WHERE MaPhieuKhamBenh = %s
+              AND TrangThaiPhieuKham = 'DANG_KHAM'
+            """,
+            (ma_phieu,),
+        )
+        if cursor.rowcount != 1:
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Phiếu khám vừa thay đổi. Hãy tải lại trước khi xóa.",
+            )
+        commit_attempted = True
+        connection.commit()
+    except AppError:
+        if not commit_attempted:
+            _rollback(connection)
+        raise
+    except mysql.connector.Error as error:
+        if commit_attempted:
+            raise AppError(
+                "COMMIT_CHUA_XAC_DINH",
+                "Chưa xác định được kết quả xóa phiếu. Hãy tải lại hồ sơ bệnh án.",
+            ) from error
+        _rollback(connection)
+        logger.exception("Could not delete in-progress consultation %s", ma_phieu)
+        raise app_error_from_database(error) from error
+    except Exception:
+        if not commit_attempted:
+            _rollback(connection)
         raise
     finally:
         _close_transaction(cursor, connection)

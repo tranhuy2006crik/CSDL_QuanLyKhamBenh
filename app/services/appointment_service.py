@@ -9,17 +9,18 @@ from typing import Literal, cast
 from app.contracts import (
     AppointmentStatus,
     BacSiChiTietDTO,
+    Identifier,
     LichHenDTO,
     LichLamViecDTO,
 )
 from app.demo_data import is_demo_mode
-from app.errors import AppError, require_positive_int
+from app.errors import AppError, require_identifier, require_positive_int
 from app.services.clinic_service import (
     lay_bac_si,
     lay_khoa,
     lay_lich_lam_viec,
-    lay_lich_su_benh_nhan,
 )
+from app.services.tra_cuu_service import lay_chi_tiet_lan_kham
 
 
 APPOINTMENT_MINUTES = 30
@@ -102,8 +103,8 @@ def _time_from_value(value: time | timedelta) -> time:
     return time(hours, minutes, seconds)
 
 
-def _weekday(value: str) -> int:
-    normalized = unicodedata.normalize("NFD", value.casefold())
+def _weekday(value: str | int) -> int:
+    normalized = unicodedata.normalize("NFD", str(value).casefold())
     normalized = "".join(
         character
         for character in normalized
@@ -120,7 +121,7 @@ def _weekday(value: str) -> int:
 
 
 def _doctor_and_schedule(
-    doctor_id: int,
+    doctor_id: Identifier,
 ) -> tuple[BacSiChiTietDTO, list[LichLamViecDTO]]:
     doctor = lay_bac_si(doctor_id)
     if doctor is None:
@@ -149,7 +150,7 @@ def _validate_booking_date(booking_date: date) -> None:
 
 
 def _active_for_doctor(
-    doctor_id: int, exclude_appointment_id: int | None = None
+    doctor_id: Identifier, exclude_appointment_id: int | None = None
 ) -> list[LichHenDTO]:
     return [
         appointment
@@ -161,7 +162,7 @@ def _active_for_doctor(
 
 
 def _active_for_patient(
-    patient_id: int, exclude_appointment_id: int | None = None
+    patient_id: Identifier, exclude_appointment_id: int | None = None
 ) -> list[LichHenDTO]:
     return [
         appointment
@@ -209,11 +210,11 @@ def _slots_for_date(
 
 
 def gio_con_trong(
-    ma_bac_si: int,
+    ma_bac_si: Identifier,
     ngay_hen: date,
     exclude_ma_lich: int | None = None,
 ) -> list[datetime]:
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if exclude_ma_lich is not None:
         require_positive_int(exclude_ma_lich, "exclude_ma_lich", "Mã lịch")
     _validate_booking_date(ngay_hen)
@@ -223,11 +224,50 @@ def gio_con_trong(
     return _slots_for_date(ngay_hen, schedule, appointments)
 
 
+def cac_khung_gio_trong_ngay(
+    ma_bac_si: Identifier,
+    ngay_hen: date,
+    exclude_ma_lich: int | None = None,
+) -> list[tuple[datetime, str]]:
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    if exclude_ma_lich is not None:
+        require_positive_int(exclude_ma_lich, "exclude_ma_lich", "Mã lịch")
+    _validate_booking_date(ngay_hen)
+    _, schedule = _doctor_and_schedule(ma_bac_si)
+    with _lock:
+        appointments = deepcopy(_active_for_doctor(ma_bac_si, exclude_ma_lich))
+
+    now = datetime.now()
+    duration = timedelta(minutes=APPOINTMENT_MINUTES)
+    slots: dict[datetime, str] = {}
+    for row in schedule:
+        if _weekday(row["thu"]) != ngay_hen.weekday():
+            continue
+        start = datetime.combine(ngay_hen, _time_from_value(row["gio_bat_dau"]))
+        end = datetime.combine(ngay_hen, _time_from_value(row["gio_ket_thuc"]))
+        if end <= start:
+            raise AppError(
+                "DU_LIEU_KHONG_HOP_LE",
+                "Ca làm việc phải kết thúc sau giờ bắt đầu.",
+            )
+        slot = start
+        while slot + duration <= end:
+            if any(_overlaps(slot, slot + duration, item) for item in appointments):
+                status = "booked"
+            elif slot <= now:
+                status = "past"
+            else:
+                status = "available"
+            slots[slot] = status
+            slot += duration
+    return sorted(slots.items())
+
+
 def gio_trong_30_ngay(
-    ma_bac_si: int,
+    ma_bac_si: Identifier,
     ngay_bat_dau: date | None = None,
 ) -> dict[date, list[datetime]]:
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     start_date = ngay_bat_dau or date.today()
     _validate_booking_date(start_date)
     _, schedule = _doctor_and_schedule(ma_bac_si)
@@ -245,13 +285,13 @@ def gio_trong_30_ngay(
 
 
 def dat_lich(
-    ma_benh_nhan: int,
+    ma_benh_nhan: Identifier,
     ten_benh_nhan: str,
-    ma_bac_si: int,
+    ma_bac_si: Identifier,
     ngay_gio_bat_dau: datetime,
 ) -> LichHenDTO:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if not isinstance(ten_benh_nhan, str) or not ten_benh_nhan.strip():
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE", "Tên bệnh nhân không hợp lệ."
@@ -311,6 +351,7 @@ def dat_lich(
             "ket_thuc": ngay_gio_bat_dau
             + timedelta(minutes=APPOINTMENT_MINUTES),
             "trang_thai": "CONFIRMED",
+            "da_an": False,
             "ly_do_huy": None,
             "ma_phieu_kham": None,
             "tao_luc": now,
@@ -320,7 +361,7 @@ def dat_lich(
         return cast(LichHenDTO, appointment.copy())
 
 
-def _department_name(department_id: int) -> str:
+def _department_name(department_id: Identifier) -> str:
     department = next(
         (row for row in lay_khoa() if row["ma_khoa"] == department_id),
         None,
@@ -332,13 +373,16 @@ def _department_name(department_id: int) -> str:
     return department["ten_khoa"]
 
 
-def lich_theo_benh_nhan(ma_benh_nhan: int) -> list[LichHenDTO]:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+def lich_theo_benh_nhan(
+    ma_benh_nhan: Identifier, bao_gom_da_an: bool = False
+) -> list[LichHenDTO]:
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     with _lock:
         rows = [
             row
             for row in _session()
             if row["ma_benh_nhan"] == ma_benh_nhan
+            and (bao_gom_da_an or not row["da_an"])
         ]
         return cast(
             list[LichHenDTO],
@@ -346,8 +390,10 @@ def lich_theo_benh_nhan(ma_benh_nhan: int) -> list[LichHenDTO]:
         )
 
 
-def lich_theo_bac_si(ma_bac_si: int, ngay_hen: date) -> list[LichHenDTO]:
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+def lich_theo_bac_si(
+    ma_bac_si: Identifier, ngay_hen: date, bao_gom_da_an: bool = False
+) -> list[LichHenDTO]:
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if isinstance(ngay_hen, datetime) or not isinstance(ngay_hen, date):
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE", "Ngày xem lịch không hợp lệ.", "ngay_hen"
@@ -358,6 +404,7 @@ def lich_theo_bac_si(ma_bac_si: int, ngay_hen: date) -> list[LichHenDTO]:
             for row in _session()
             if row["ma_bac_si"] == ma_bac_si
             and row["bat_dau"].date() == ngay_hen
+            and (bao_gom_da_an or not row["da_an"])
         ]
         return cast(
             list[LichHenDTO],
@@ -366,10 +413,10 @@ def lich_theo_bac_si(ma_bac_si: int, ngay_hen: date) -> list[LichHenDTO]:
 
 
 def _get_owned_appointment(
-    ma_lich: int, actor: AppointmentActor, actor_id: int
+    ma_lich: int, actor: AppointmentActor, actor_id: Identifier
 ) -> LichHenDTO:
     require_positive_int(ma_lich, "ma_lich", "Mã lịch hẹn")
-    require_positive_int(actor_id, "actor_id", "Mã người thao tác")
+    require_identifier(actor_id, "actor_id", "Mã người thao tác")
     for appointment in _session():
         if appointment["ma_lich"] != ma_lich:
             continue
@@ -388,10 +435,10 @@ def _get_owned_appointment(
 
 def doi_lich(
     ma_lich: int,
-    ma_benh_nhan: int,
+    ma_benh_nhan: Identifier,
     ngay_gio_bat_dau_moi: datetime,
 ) -> LichHenDTO:
-    require_positive_int(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     if not isinstance(ngay_gio_bat_dau_moi, datetime) or ngay_gio_bat_dau_moi.tzinfo:
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE", "Ngày giờ hẹn mới không hợp lệ."
@@ -467,11 +514,11 @@ def huy_lich(
 
 def cap_nhat_trang_thai(
     ma_lich: int,
-    ma_bac_si: int,
+    ma_bac_si: Identifier,
     trang_thai_moi: AppointmentStatus,
-    ma_phieu_kham: int | None = None,
+    ma_phieu_kham: Identifier | None = None,
 ) -> LichHenDTO:
-    require_positive_int(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if trang_thai_moi not in {"ARRIVED", "COMPLETED", "NO_SHOW"}:
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE", "Trạng thái cập nhật không hợp lệ."
@@ -497,31 +544,34 @@ def cap_nhat_trang_thai(
                     "KHONG_THE_CAP_NHAT",
                     "Chỉ chuyển sang đã khám sau khi ghi nhận bệnh nhân đã đến.",
                 )
-            if ma_phieu_kham is None:
+            if appointment["ma_phieu_kham"] is None:
                 raise AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Cần tạo phiếu khám thực tế trước khi hoàn tất lịch hẹn.",
+                    "Cần liên kết phiếu khám thực tế trước khi hoàn tất lịch hẹn.",
                     "ma_phieu_kham",
                 )
-            require_positive_int(
-                ma_phieu_kham, "ma_phieu_kham", "Mã phiếu khám"
+            require_identifier(ma_phieu_kham, "ma_phieu_kham", "Mã phiếu khám")
+            if appointment["ma_phieu_kham"] != ma_phieu_kham:
+                raise AppError(
+                    "DU_LIEU_KHONG_HOP_LE",
+                    "Phiếu khám không khớp với phiếu đã liên kết.",
+                    "ma_phieu_kham",
+                )
+            visit = lay_chi_tiet_lan_kham(
+                ma_phieu_kham, "doctor", ma_bac_si
             )
-            visits = lay_lich_su_benh_nhan(appointment["ma_benh_nhan"])
-            visit = next(
-                (row for row in visits if row["ma_phieu"] == ma_phieu_kham),
-                None,
-            )
+            visit_info = visit["thong_tin"]
             if (
-                visit is None
-                or visit["ma_bac_si"] != ma_bac_si
-                or visit["ngay_gio_kham"].date() != appointment["bat_dau"].date()
+                visit_info["ma_benh_nhan"] != appointment["ma_benh_nhan"]
+                or visit_info["ma_bac_si"] != ma_bac_si
+                or visit_info["ngay_gio_kham"].date() != appointment["bat_dau"].date()
+                or visit_info["trang_thai"] != "HOAN_THANH"
             ):
                 raise AppError(
-                    "DU_LIEU_KHONG_HOP_LE",
-                    "Phiếu khám phải thuộc đúng bệnh nhân, bác sĩ và ngày hẹn.",
+                    "CHUA_HOAN_THANH",
+                    "Lịch chỉ chuyển sang đã khám sau khi phiếu khám liên kết hoàn thành.",
                     "ma_phieu_kham",
                 )
-            appointment["ma_phieu_kham"] = ma_phieu_kham
         elif (
             current != "CONFIRMED"
             or now < appointment["ket_thuc"]
@@ -533,3 +583,59 @@ def cap_nhat_trang_thai(
         appointment["trang_thai"] = trang_thai_moi
         appointment["cap_nhat_luc"] = now
         return cast(LichHenDTO, appointment.copy())
+
+
+def gan_phieu_vao_lich(
+    ma_lich: int, ma_bac_si: Identifier, ma_phieu_kham: Identifier
+) -> LichHenDTO:
+    require_identifier(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+    require_identifier(ma_phieu_kham, "ma_phieu_kham", "Mã phiếu khám")
+    with _lock:
+        appointment = _get_owned_appointment(ma_lich, "doctor", ma_bac_si)
+        if appointment["trang_thai"] != "ARRIVED":
+            raise AppError(
+                "KHONG_THE_CAP_NHAT",
+                "Chỉ liên kết phiếu khi bệnh nhân đã được ghi nhận đến khám.",
+            )
+        visit = lay_chi_tiet_lan_kham(ma_phieu_kham, "doctor", ma_bac_si)
+        info = visit["thong_tin"]
+        if (
+            info["ma_benh_nhan"] != appointment["ma_benh_nhan"]
+            or info["ma_bac_si"] != ma_bac_si
+            or info["ngay_gio_kham"].date() != appointment["bat_dau"].date()
+        ):
+            raise AppError(
+                "DU_LIEU_KHONG_HOP_LE",
+                "Phiếu khám phải thuộc đúng bệnh nhân, bác sĩ và ngày hẹn.",
+                "ma_phieu_kham",
+            )
+        if appointment["ma_phieu_kham"] not in (None, ma_phieu_kham):
+            raise AppError(
+                "PHIEU_DA_LIEN_KET", "Lịch hẹn đã liên kết với một phiếu khám khác."
+            )
+        appointment["ma_phieu_kham"] = ma_phieu_kham
+        appointment["cap_nhat_luc"] = datetime.now()
+        return cast(LichHenDTO, appointment.copy())
+
+
+def an_lich_da_xu_ly(
+    ma_lich: int, actor: AppointmentActor, actor_id: Identifier
+) -> None:
+    with _lock:
+        appointment = _get_owned_appointment(ma_lich, actor, actor_id)
+        if appointment["trang_thai"] not in {"COMPLETED", "NO_SHOW", "CANCELLED"}:
+            raise AppError(
+                "KHONG_THE_CAP_NHAT",
+                "Chỉ có thể ẩn lịch đã khám, đã hủy hoặc vắng mặt.",
+            )
+        appointment["da_an"] = True
+        appointment["cap_nhat_luc"] = datetime.now()
+
+
+def hien_lich_da_an(
+    ma_lich: int, actor: AppointmentActor, actor_id: Identifier
+) -> None:
+    with _lock:
+        appointment = _get_owned_appointment(ma_lich, actor, actor_id)
+        appointment["da_an"] = False
+        appointment["cap_nhat_luc"] = datetime.now()

@@ -55,7 +55,7 @@ class DemoClinicData:
                 "ho_ten": "Lê Minh Hùng (DEMO)",
                 "ngay_sinh": date(2002, 2, 6),
                 "nam_sinh": 2002,
-                "gioi_tinh": "Nam",
+                "gioi_tinh": "NAM",
                 "dia_chi": "Hà Nội (dữ liệu demo)",
                 "so_dien_thoai": "0900000001",
             },
@@ -64,7 +64,7 @@ class DemoClinicData:
                 "ho_ten": "Phạm Ngọc Mai (DEMO)",
                 "ngay_sinh": date(2004, 9, 21),
                 "nam_sinh": 2004,
-                "gioi_tinh": "Nữ",
+                "gioi_tinh": "NU",
                 "dia_chi": "Hà Nội (dữ liệu demo)",
                 "so_dien_thoai": "0900000002",
             },
@@ -109,6 +109,7 @@ class DemoClinicData:
         self.visits: dict[int, dict[str, Any]] = {
             970001: {
                 "ma_phieu": 970001,
+                "trang_thai": "HOAN_THANH",
                 "ma_benh_nhan": DEMO_PATIENT_ID,
                 "ma_bac_si": DEMO_DOCTOR_ID,
                 "ngay_gio_kham": datetime.combine(
@@ -151,6 +152,7 @@ class DemoClinicData:
             },
             970002: {
                 "ma_phieu": 970002,
+                "trang_thai": "DANG_KHAM",
                 "ma_benh_nhan": DEMO_PATIENT_ID,
                 "ma_bac_si": DEMO_SECOND_DOCTOR_ID,
                 "ngay_gio_kham": datetime.combine(
@@ -312,6 +314,7 @@ class DemoClinicData:
                 visit
                 for visit in self.visits.values()
                 if visit["ma_benh_nhan"] == patient["ma_benh_nhan"]
+                and visit["trang_thai"] == "HOAN_THANH"
             ]
             if doctor_id is not None and not any(
                 visit["ma_bac_si"] == doctor_id for visit in patient_visits
@@ -333,7 +336,10 @@ class DemoClinicData:
     def history(self, patient_id: int) -> list[LichSuKhamRow]:
         rows = []
         for visit in self.visits.values():
-            if visit["ma_benh_nhan"] != patient_id:
+            if (
+                visit["ma_benh_nhan"] != patient_id
+                or visit["trang_thai"] != "HOAN_THANH"
+            ):
                 continue
             self._refresh_visit_totals(visit)
             doctor = self.get_doctor(visit["ma_bac_si"])
@@ -343,6 +349,7 @@ class DemoClinicData:
             rows.append(
                 {
                     "ma_phieu": visit["ma_phieu"],
+                    "trang_thai": visit["trang_thai"],
                     "ngay_gio_kham": visit["ngay_gio_kham"],
                     "ma_bac_si": visit["ma_bac_si"],
                     "ten_bac_si": doctor["ten_bac_si"],
@@ -392,6 +399,7 @@ class DemoClinicData:
                 visit
                 for visit in self.visits.values()
                 if visit["ma_bac_si"] == doctor["ma_bac_si"]
+                and visit["trang_thai"] == "HOAN_THANH"
                 and start <= visit["ngay_gio_kham"].date() < end
             ]
             if not visits and not include_empty:
@@ -410,6 +418,19 @@ class DemoClinicData:
                     "ma_khoa": doctor["ma_khoa"],
                     "ten_khoa": department["ten_khoa"],
                     "so_luot_kham": len(visits),
+                    "so_benh_nhan": len({visit["ma_benh_nhan"] for visit in visits}),
+                    "gia_kham": sum(
+                        (self._money(visit["gia_kham"]) for visit in visits),
+                        Decimal("0"),
+                    ),
+                    "gia_xet_nghiem": sum(
+                        (self._money(visit["gia_xet_nghiem"]) for visit in visits),
+                        Decimal("0"),
+                    ),
+                    "gia_thuoc": sum(
+                        (self._money(visit["gia_thuoc"]) for visit in visits),
+                        Decimal("0"),
+                    ),
                     "tong_gia_tri": total,
                 }
             )
@@ -441,8 +462,10 @@ class DemoClinicData:
             {
                 "thong_tin": {
                     "ma_phieu": visit_id,
+                "trang_thai": visit["trang_thai"],
                     "ma_benh_nhan": visit["ma_benh_nhan"],
                     "ho_ten_benh_nhan": patient["ho_ten"],
+                "ngay_sinh": patient["ngay_sinh"],
                     "so_dien_thoai": patient["so_dien_thoai"],
                     "ma_bac_si": visit["ma_bac_si"],
                     "ten_bac_si": doctor["ten_bac_si"],
@@ -469,6 +492,55 @@ class DemoClinicData:
                 "don_thuoc": order,
             }
         )
+
+    def find_in_progress_visit(
+        self, patient_id: int, doctor_id: int
+    ) -> int | None:
+        return next(
+            (
+                visit["ma_phieu"]
+                for visit in self.visits.values()
+                if visit["ma_benh_nhan"] == patient_id
+                and visit["ma_bac_si"] == doctor_id
+                and visit["trang_thai"] == "DANG_KHAM"
+            ),
+            None,
+        )
+
+    def complete_visit(self, visit_id: int, doctor_id: int) -> None:
+        visit = self.visits.get(visit_id)
+        if visit is None:
+            raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
+        if visit["ma_bac_si"] != doctor_id:
+            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError("PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành.")
+        if not (visit["chan_doan"] or "").strip():
+            raise AppError(
+                "CHUA_DU_DIEU_KIEN_HOAN_THANH", "Cần nhập chẩn đoán trước khi chốt phiếu."
+            )
+        if any(not (lab["ket_qua"] or "").strip() for lab in visit["ds_xet_nghiem"]):
+            raise AppError(
+                "CHUA_DU_DIEU_KIEN_HOAN_THANH",
+                "Cần hoàn tất kết quả của tất cả xét nghiệm trước khi chốt phiếu.",
+            )
+        visit["trang_thai"] = "HOAN_THANH"
+
+    def delete_in_progress_visit(self, visit_id: int, doctor_id: int) -> None:
+        visit = self.visits.get(visit_id)
+        if visit is None:
+            raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
+        if visit["ma_bac_si"] != doctor_id:
+            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được xóa phiếu.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError("PHIEU_DA_HOAN_THANH", "Không thể xóa phiếu đã hoàn thành.")
+        order = visit["don_thuoc"]
+        if order is not None:
+            for line in order["ds_thuoc"]:
+                self.medicines[line["ma_thuoc"]]["so_luong_co_san"] += line[
+                    "so_luong_ke"
+                ]
+        del self.visits[visit_id]
 
     def _public_order(self, visit: dict[str, Any]) -> DonThuocDTO | None:
         order = visit["don_thuoc"]
@@ -507,6 +579,7 @@ class DemoClinicData:
             raise AppError("TRUNG_MA", f"Mã phiếu khám {visit_id} đã được dùng.")
         self.visits[visit_id] = {
             "ma_phieu": visit_id,
+            "trang_thai": "DANG_KHAM",
             "ma_benh_nhan": patient_id,
             "ma_bac_si": doctor_id,
             "ngay_gio_kham": datetime.now().replace(second=0, microsecond=0),
@@ -524,6 +597,8 @@ class DemoClinicData:
         visit = self.visits.get(visit_id)
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError("PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành.")
         visit["trieu_chung"] = symptoms
         visit["chan_doan"] = diagnosis
 
@@ -539,6 +614,11 @@ class DemoClinicData:
         visit = self.visits.get(visit_id)
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể thay đổi xét nghiệm của phiếu đã hoàn thành.",
+            )
         if sequence is None:
             sequence = max((row["stt"] for row in visit["ds_xet_nghiem"]), default=0) + 1
             visit["ds_xet_nghiem"].append(
@@ -581,6 +661,11 @@ class DemoClinicData:
         visit = self.visits.get(visit_id)
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
+        if visit["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể thay đổi đơn thuốc của phiếu đã hoàn thành.",
+            )
         if order_date < visit["ngay_gio_kham"].date():
             raise AppError(
                 "DU_LIEU_KHONG_HOP_LE",

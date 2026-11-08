@@ -3,7 +3,7 @@ from datetime import time, timedelta
 from decimal import Decimal
 from tkinter import ttk
 
-from app.contracts import BenhNhanDTO
+from app.contracts import BenhNhanDTO, Identifier
 from app.services.clinic_service import (
     lay_khoa,
     lay_lich_su_benh_nhan,
@@ -22,6 +22,16 @@ def _format_work_time(value: time | timedelta) -> str:
     sign = "-" if total_minutes < 0 else ""
     hours, minutes = divmod(abs(total_minutes), 60)
     return f"{sign}{hours:02}:{minutes:02}"
+
+
+def _format_weekday(value: str | int) -> str:
+    if isinstance(value, int) or str(value).isdigit():
+        number = int(value)
+        if 2 <= number <= 7:
+            return f"Thứ {('Hai', 'Ba', 'Tư', 'Năm', 'Sáu', 'Bảy')[number - 2]}"
+        if number == 8:
+            return "Chủ Nhật"
+    return str(value)
 
 
 class PatientPortal(ttk.Frame):
@@ -45,7 +55,12 @@ class PatientPortal(ttk.Frame):
             text=f'Hồ sơ bệnh nhân — {patient["ho_ten"]} (Mã {patient["ma_benh_nhan"]})',
             font=("TkDefaultFont", 15, "bold"),
         ).grid(row=0, column=0, sticky="w")
-        ttk.Button(header, text="Đổi vai trò / đăng xuất", command=on_logout).grid(
+        ttk.Button(
+            header,
+            text="Đổi vai trò / đăng xuất",
+            command=on_logout,
+            style="Secondary.TButton",
+        ).grid(
             row=0, column=1, sticky="e"
         )
 
@@ -60,8 +75,13 @@ class PatientPortal(ttk.Frame):
         self.notebook.add(self.appointment_view, text="Đặt lịch hẹn")
         self.notebook.add(self.schedule_view, text="Lịch làm việc bác sĩ")
 
-    def _open_visit(self, ma_phieu: int) -> None:
-        PhieuKhamDetailDialog(self, ma_phieu, read_only=True)
+    def _open_visit(self, ma_phieu: Identifier) -> None:
+        PhieuKhamDetailDialog(
+            self,
+            ma_phieu,
+            vai_tro="patient",
+            ma_nguoi_xem=self.patient["ma_benh_nhan"],
+        )
 
 
 class PatientHistoryView(ttk.Frame):
@@ -179,7 +199,7 @@ class PatientHistoryView(ttk.Frame):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if selection:
-            self.open_visit(int(selection[0]))
+            self.open_visit(selection[0])
 
 
 class DoctorScheduleView(ttk.Frame):
@@ -261,7 +281,7 @@ class DoctorScheduleView(ttk.Frame):
                 values=(
                     row["ten_bac_si"],
                     row["phong_kham"] or "—",
-                    row["thu"],
+                    _format_weekday(row["thu"]),
                     _format_work_time(start),
                     _format_work_time(end),
                 ),

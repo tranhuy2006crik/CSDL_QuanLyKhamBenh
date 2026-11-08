@@ -6,10 +6,15 @@ import mysql.connector
 from mysql.connector.connection import MySQLConnection
 from mysql.connector.cursor import MySQLCursorDict
 
-from app.contracts import DonThuocDTO, DongThuocInput
+from app.contracts import DonThuocDTO, DongThuocInput, Identifier
 from app.demo_data import demo_data, is_demo_mode
 from app.db import get_connection
-from app.errors import AppError, app_error_from_database, require_positive_int
+from app.errors import (
+    AppError,
+    app_error_from_database,
+    require_identifier,
+    require_positive_int,
+)
 from app.services.tra_cuu_service import lay_don_thuoc
 
 
@@ -18,7 +23,8 @@ MAX_SQL_INT = 2_147_483_647
 MAX_SQL_UNSIGNED_INT = 4_294_967_295
 
 Q_LOCK_PHIEU = """
-SELECT NgayGioKham AS ngay_gio_kham
+SELECT NgayGioKham AS ngay_gio_kham,
+       TrangThaiPhieuKham AS trang_thai
 FROM PhieuKhamBenh
 WHERE MaPhieuKhamBenh = %(ma_phieu)s
 FOR UPDATE
@@ -56,13 +62,17 @@ FOR UPDATE
 Q_INSERT_DON = """
 INSERT INTO DonThuoc
     (MaDonThuoc, MaPhieuKhamBenh, NgayLapDonThuoc, LoiDanChung)
-VALUES
-    (%(ma_don)s, %(ma_phieu)s, %(ngay_lap)s, %(loi_dan)s)
+SELECT %(ma_don)s, %(ma_phieu)s, CURRENT_DATE(), %(loi_dan)s
+FROM DUAL
+WHERE (
+    SELECT TrangThaiPhieuKham
+    FROM PhieuKhamBenh
+    WHERE MaPhieuKhamBenh = %(ma_phieu)s
+) = 'DANG_KHAM'
 """
 Q_UPDATE_DON = """
 UPDATE DonThuoc
-SET NgayLapDonThuoc = %(ngay_lap)s,
-    LoiDanChung = %(loi_dan)s
+SET LoiDanChung = %(loi_dan)s
 WHERE MaDonThuoc = %(ma_don)s
   AND MaPhieuKhamBenh = %(ma_phieu)s
 """
@@ -70,8 +80,20 @@ Q_DELETE_CHI_TIET = "DELETE FROM ChiTietDonThuoc WHERE MaDonThuoc = %(ma_don)s"
 Q_INSERT_CHI_TIET = """
 INSERT INTO ChiTietDonThuoc
     (MaDonThuoc, MaThuoc, SoLuongKe, CachDung, DonGiaApDung)
+SELECT %(ma_don)s, %(ma_thuoc)s, %(so_luong_ke)s, %(cach_dung)s, DonGia
+FROM Thuoc
+WHERE MaThuoc = %(ma_thuoc)s
+"""
+Q_INSERT_CHI_TIET_HISTORICAL_PRICE = """
+INSERT INTO ChiTietDonThuoc
+    (MaDonThuoc, MaThuoc, SoLuongKe, CachDung, DonGiaApDung)
 VALUES
     (%(ma_don)s, %(ma_thuoc)s, %(so_luong_ke)s, %(cach_dung)s, %(don_gia)s)
+"""
+Q_COUNT_CHI_TIET = """
+SELECT COUNT(*) AS so_dong
+FROM ChiTietDonThuoc
+WHERE MaDonThuoc = %(ma_don)s
 """
 Q_TRU_TON = """
 UPDATE Thuoc
@@ -93,20 +115,14 @@ WHERE MaDonThuoc = %(ma_don)s
 
 
 def _validate_draft(
-    ma_phieu: int,
-    ma_don: int,
+    ma_phieu: Identifier,
+    ma_don: Identifier,
     ngay_lap: date,
     loi_dan: str | None,
     ds_thuoc: list[DongThuocInput],
 ) -> tuple[str | None, list[DongThuocInput]]:
-    require_positive_int(ma_phieu, "ma_phieu", "Mã phiếu khám")
-    require_positive_int(ma_don, "ma_don", "Mã đơn thuốc")
-    if ma_phieu > MAX_SQL_UNSIGNED_INT or ma_don > MAX_SQL_UNSIGNED_INT:
-        raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            "Mã phiếu hoặc mã đơn vượt quá phạm vi INT UNSIGNED.",
-            "ma_phieu" if ma_phieu > MAX_SQL_UNSIGNED_INT else "ma_don",
-        )
+    require_identifier(ma_phieu, "ma_phieu", "Mã phiếu khám")
+    require_identifier(ma_don, "ma_don", "Mã đơn thuốc")
     if isinstance(ngay_lap, datetime) or not isinstance(ngay_lap, date):
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE",
@@ -131,7 +147,7 @@ def _validate_draft(
         )
 
     cleaned_items: list[DongThuocInput] = []
-    seen_medicines: set[int] = set()
+    seen_medicines: set[Identifier] = set()
     for index, item in enumerate(ds_thuoc):
         field = f"ds_thuoc[{index}]"
         if not isinstance(item, dict):
@@ -143,12 +159,12 @@ def _validate_draft(
         ma_thuoc = item.get("ma_thuoc")
         so_luong = item.get("so_luong_ke")
         cach_dung = item.get("cach_dung")
-        require_positive_int(ma_thuoc, f"{field}.ma_thuoc", "Mã thuốc")
+        require_identifier(ma_thuoc, f"{field}.ma_thuoc", "Mã thuốc")
         require_positive_int(so_luong, f"{field}.so_luong_ke", "Số lượng kê")
-        if ma_thuoc > MAX_SQL_UNSIGNED_INT or so_luong > MAX_SQL_INT:
+        if so_luong > MAX_SQL_INT:
             raise AppError(
                 "DU_LIEU_KHONG_HOP_LE",
-                "Mã thuốc hoặc số lượng kê vượt phạm vi dữ liệu.",
+                "Số lượng kê vượt phạm vi dữ liệu.",
                 field,
             )
         if not isinstance(cach_dung, str) or not cach_dung.strip():
@@ -189,10 +205,10 @@ def _fetchall(
 
 
 def _lock_medicines(
-    cursor: MySQLCursorDict, medicine_ids: set[int]
-) -> dict[int, dict[str, Any]]:
-    medicines: dict[int, dict[str, Any]] = {}
-    for medicine_id in sorted(medicine_ids):
+    cursor: MySQLCursorDict, medicine_ids: set[Identifier]
+) -> dict[Identifier, dict[str, Any]]:
+    medicines: dict[Identifier, dict[str, Any]] = {}
+    for medicine_id in sorted(medicine_ids, key=str):
         medicine = _fetchone(cursor, Q_LOCK_THUOC, {"ma_thuoc": medicine_id})
         if medicine is None:
             raise AppError(
@@ -226,8 +242,8 @@ def _close_resources(
 
 
 def luu_don_thuoc(
-    ma_phieu: int,
-    ma_don: int,
+    ma_phieu: Identifier,
+    ma_don: Identifier,
     ngay_lap: date,
     loi_dan: str | None,
     ds_thuoc: list[DongThuocInput],
@@ -262,6 +278,11 @@ def luu_don_thuoc(
         appointment = _fetchone(cursor, Q_LOCK_PHIEU, {"ma_phieu": ma_phieu})
         if appointment is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if appointment["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể thay đổi đơn thuốc của phiếu đã hoàn thành.",
+            )
         ngay_gio_kham = appointment["ngay_gio_kham"]
         if ngay_lap < ngay_gio_kham.date():
             raise AppError(
@@ -308,8 +329,8 @@ def luu_don_thuoc(
         medicine_ids = set(old_by_medicine) | set(new_by_medicine)
         medicines = _lock_medicines(cursor, medicine_ids)
 
-        deltas: dict[int, int] = {}
-        for medicine_id in sorted(medicine_ids):
+        deltas: dict[Identifier, int] = {}
+        for medicine_id in sorted(medicine_ids, key=str):
             old_quantity = (
                 int(old_by_medicine[medicine_id]["so_luong_ke"])
                 if medicine_id in old_by_medicine
@@ -343,39 +364,33 @@ def luu_don_thuoc(
         header_params = {
             "ma_don": ma_don,
             "ma_phieu": ma_phieu,
-            "ngay_lap": ngay_lap,
             "loi_dan": cleaned_loi_dan,
         }
         if existing is None:
             last_statement = Q_INSERT_DON
             cursor.execute(Q_INSERT_DON, header_params)
+            if cursor.rowcount != 1:
+                raise AppError(
+                    "XUNG_DOT_DU_LIEU",
+                    "Không thể tạo đầu đơn thuốc cho phiếu đang khám.",
+                )
         else:
             cursor.execute(Q_UPDATE_DON, header_params)
             cursor.execute(Q_DELETE_CHI_TIET, {"ma_don": ma_don})
+            if cursor.rowcount != len(old_lines):
+                raise AppError(
+                    "XUNG_DOT_DU_LIEU",
+                    "Chi tiết đơn thuốc vừa thay đổi. Hãy tải lại trước khi lưu.",
+                )
 
-        for item in cleaned_items:
-            medicine_id = item["ma_thuoc"]
-            old_line = old_by_medicine.get(medicine_id)
-            applied_price = (
-                old_line["don_gia_ap_dung"]
-                if old_line is not None
-                else medicines[medicine_id]["don_gia"]
-            )
-            last_statement = Q_INSERT_CHI_TIET
-            cursor.execute(
-                Q_INSERT_CHI_TIET,
-                {
-                    "ma_don": ma_don,
-                    "ma_thuoc": medicine_id,
-                    "so_luong_ke": item["so_luong_ke"],
-                    "cach_dung": item["cach_dung"],
-                    "don_gia": applied_price,
-                },
-            )
-
-        for medicine_id in sorted(medicine_ids):
+        ordered_medicine_ids = [item["ma_thuoc"] for item in cleaned_items]
+        ordered_medicine_ids.extend(
+            sorted(medicine_ids - set(new_by_medicine), key=str)
+        )
+        for medicine_id in ordered_medicine_ids:
             delta = deltas[medicine_id]
             if delta > 0:
+                last_statement = Q_TRU_TON
                 cursor.execute(
                     Q_TRU_TON,
                     {"ma_thuoc": medicine_id, "so_luong": delta},
@@ -387,6 +402,7 @@ def luu_don_thuoc(
                         "ds_thuoc",
                     )
             elif delta < 0:
+                last_statement = Q_HOAN_TON
                 cursor.execute(
                     Q_HOAN_TON,
                     {
@@ -401,6 +417,42 @@ def luu_don_thuoc(
                         f"Không thể hoàn tồn thuốc mã {medicine_id}.",
                         "ds_thuoc",
                     )
+
+            item = new_by_medicine.get(medicine_id)
+            if item is None:
+                continue
+            old_line = old_by_medicine.get(medicine_id)
+            statement = (
+                Q_INSERT_CHI_TIET_HISTORICAL_PRICE
+                if old_line is not None
+                else Q_INSERT_CHI_TIET
+            )
+            params: dict[str, Any] = {
+                "ma_don": ma_don,
+                "ma_thuoc": medicine_id,
+                "so_luong_ke": item["so_luong_ke"],
+                "cach_dung": item["cach_dung"],
+            }
+            if old_line is not None:
+                params["don_gia"] = old_line["don_gia_ap_dung"]
+            last_statement = statement
+            cursor.execute(
+                statement,
+                params,
+            )
+            if cursor.rowcount != 1:
+                raise AppError(
+                    "XUNG_DOT_DU_LIEU",
+                    f"Không lưu được thuốc mã {medicine_id}. Hãy tải lại đơn.",
+                )
+
+        cursor.execute(Q_COUNT_CHI_TIET, {"ma_don": ma_don})
+        count_row = cursor.fetchone()
+        if count_row is None or int(count_row["so_dong"]) != len(cleaned_items):
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Đơn thuốc chưa có đầy đủ chi tiết. Hãy tải lại trước khi thao tác.",
+            )
 
         commit_attempted = True
         connection.commit()
@@ -457,9 +509,9 @@ def luu_don_thuoc(
     return saved
 
 
-def xoa_don_thuoc(ma_phieu: int, ma_don: int) -> None:
-    require_positive_int(ma_phieu, "ma_phieu", "Mã phiếu khám")
-    require_positive_int(ma_don, "ma_don", "Mã đơn thuốc")
+def xoa_don_thuoc(ma_phieu: Identifier, ma_don: Identifier) -> None:
+    require_identifier(ma_phieu, "ma_phieu", "Mã phiếu khám")
+    require_identifier(ma_don, "ma_don", "Mã đơn thuốc")
     if is_demo_mode():
         demo_data().delete_order(ma_phieu, ma_don)
         return
@@ -473,6 +525,11 @@ def xoa_don_thuoc(ma_phieu: int, ma_don: int) -> None:
         appointment = _fetchone(cursor, Q_LOCK_PHIEU, {"ma_phieu": ma_phieu})
         if appointment is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if appointment["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể xóa đơn thuốc của phiếu đã hoàn thành.",
+            )
 
         header = _fetchone(
             cursor, Q_LOCK_DON_THEO_PHIEU, {"ma_phieu": ma_phieu}
@@ -493,7 +550,7 @@ def xoa_don_thuoc(ma_phieu: int, ma_don: int) -> None:
                     f"Hoàn tồn thuốc mã {medicine_id} vượt phạm vi INT.",
                 )
 
-        for medicine_id in sorted(medicine_ids):
+        for medicine_id in sorted(medicine_ids, key=str):
             quantity = sum(
                 int(line["so_luong_ke"])
                 for line in old_lines
@@ -513,6 +570,12 @@ def xoa_don_thuoc(ma_phieu: int, ma_don: int) -> None:
                     f"Không thể hoàn tồn thuốc mã {medicine_id}.",
                 )
 
+        cursor.execute(Q_DELETE_CHI_TIET, {"ma_don": ma_don})
+        if cursor.rowcount != len(old_lines):
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Chi tiết đơn thuốc vừa thay đổi. Hãy tải lại trước khi xóa.",
+            )
         cursor.execute(Q_DELETE_DON, {"ma_don": ma_don, "ma_phieu": ma_phieu})
         if cursor.rowcount != 1:
             raise AppError(

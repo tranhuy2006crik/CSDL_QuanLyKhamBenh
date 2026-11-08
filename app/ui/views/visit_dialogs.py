@@ -2,21 +2,37 @@ import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
+from app.contracts import Identifier
 from app.errors import AppError
-from app.services.clinic_service import luu_xet_nghiem, tao_phieu_kham
-from app.services.tra_cuu_service import lay_chi_tiet_lan_kham
+from app.pdf_export import xuat_bao_cao_phieu_kham_pdf
+from app.services.clinic_service import (
+    hoan_thanh_phieu_kham,
+    luu_noi_dung_kham,
+    luu_xet_nghiem,
+    tao_phieu_kham,
+)
+from app.services.tra_cuu_service import (
+    bao_cao_chi_tiet_phieu,
+    lay_chi_tiet_lan_kham,
+)
 from app.ui.ke_don import KeDonView
-from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
+from app.ui.views.common import (
+    dinh_dang_tien,
+    hien_loi,
+    tao_bang,
+    xac_nhan_thay_doi_chua_luu,
+)
 
 
 class TaoPhieuKhamDialog(tk.Toplevel):
     def __init__(
         self,
         parent: tk.Misc,
-        ma_benh_nhan: int,
-        ma_bac_si: int,
+        ma_benh_nhan: Identifier,
+        ma_bac_si: Identifier,
         ten_benh_nhan: str,
     ) -> None:
         super().__init__(parent)
@@ -24,7 +40,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         self.geometry("650x520")
         self.minsize(580, 460)
         self.transient(parent)
-        self.result: int | None = None
+        self.result: Identifier | None = None
         self.ma_benh_nhan = ma_benh_nhan
         self.ma_bac_si = ma_bac_si
         self.columnconfigure(0, weight=1)
@@ -71,7 +87,9 @@ class TaoPhieuKhamDialog(tk.Toplevel):
 
     def _save(self) -> None:
         try:
-            ma_phieu = int(self.ma_phieu.get().strip())
+            ma_phieu = self.ma_phieu.get().strip()
+            if not ma_phieu:
+                raise ValueError("empty")
             tao_phieu_kham(
                 ma_phieu,
                 self.ma_benh_nhan,
@@ -84,7 +102,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Mã phiếu khám phải là số nguyên dương.",
+                    "Hãy nhập mã phiếu khám.",
                     "ma_phieu",
                 ),
             )
@@ -100,7 +118,7 @@ class XetNghiemDialog(tk.Toplevel):
     def __init__(
         self,
         parent: tk.Misc,
-        ma_phieu: int,
+        ma_phieu: Identifier,
         on_saved: Callable[[], None],
         row: dict[str, object] | None = None,
     ) -> None:
@@ -213,8 +231,9 @@ class PhieuKhamDetailDialog(tk.Toplevel):
     def __init__(
         self,
         parent: tk.Misc,
-        ma_phieu: int,
-        read_only: bool,
+        ma_phieu: Identifier,
+        vai_tro: str,
+        ma_nguoi_xem: Identifier,
         on_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
@@ -223,7 +242,12 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.minsize(900, 600)
         self.transient(parent)
         self.ma_phieu = ma_phieu
-        self.read_only = read_only
+        self.vai_tro = vai_tro
+        self.ma_nguoi_xem = ma_nguoi_xem
+        self.read_only = vai_tro != "doctor"
+        self.dirty = False
+        self._saved_symptoms = ""
+        self._saved_diagnosis = ""
         self.on_changed = on_changed
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -246,6 +270,31 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self._build_clinical_tab()
         self._build_lab_tab()
         self._build_medicine_tab()
+        actions = ttk.Frame(self, padding=(12, 0, 12, 12))
+        actions.grid(row=3, column=0, sticky="ew")
+        self.save_content_button = ttk.Button(
+            actions,
+            text="Lưu thay đổi",
+            command=self._save_content,
+            style="Primary.TButton",
+        )
+        self.save_content_button.pack(side="left")
+        self.complete_button = ttk.Button(
+            actions,
+            text="Hoàn thành phiếu",
+            command=self._complete_visit,
+            style="Success.TButton",
+        )
+        self.complete_button.pack(side="left", padx=8)
+        self.export_button = ttk.Button(
+            actions,
+            text="Xuất PDF kết quả khám",
+            command=self._export_report,
+            style="Secondary.TButton",
+        )
+        self.export_button.pack(side="left")
+        ttk.Button(actions, text="Đóng", command=self._request_close).pack(side="right")
+        self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._refresh()
 
     def _build_clinical_tab(self) -> None:
@@ -260,8 +309,8 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.symptoms.grid(row=1, column=0, sticky="nsew", pady=(0, 12))
         self.diagnosis = tk.Text(self.clinical_tab, height=8, wrap="word")
         self.diagnosis.grid(row=3, column=0, sticky="nsew")
-        self.symptoms.configure(state="disabled")
-        self.diagnosis.configure(state="disabled")
+        self.symptoms.bind("<<Modified>>", self._content_changed)
+        self.diagnosis.bind("<<Modified>>", self._content_changed)
 
     def _build_lab_tab(self) -> None:
         self.lab_tab.columnconfigure(0, weight=1)
@@ -289,16 +338,18 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         if not self.read_only:
             actions = ttk.Frame(self.lab_tab)
             actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-            ttk.Button(
+            self.add_lab_button = ttk.Button(
                 actions,
                 text="Chỉ định xét nghiệm",
                 command=self._add_lab,
-            ).pack(side="left")
-            ttk.Button(
+            )
+            self.add_lab_button.pack(side="left")
+            self.edit_lab_button = ttk.Button(
                 actions,
                 text="Cập nhật kết quả",
                 command=self._edit_lab,
-            ).pack(side="left", padx=8)
+            )
+            self.edit_lab_button.pack(side="left", padx=8)
         else:
             ttk.Label(
                 self.lab_tab,
@@ -323,23 +374,44 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         )
         self.medicine_table.grid(row=0, column=0, sticky="nsew")
         if not self.read_only:
-            ttk.Button(
+            self.prescription_button = ttk.Button(
                 self.medicine_tab,
                 text="Kê đơn / quản lý đơn thuốc",
                 command=self._open_prescription,
-            ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            )
+            self.prescription_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
         else:
             self.prescription_note = ttk.Label(self.medicine_tab, text="")
             self.prescription_note.grid(row=1, column=0, sticky="w", pady=(8, 0))
 
     def _refresh(self) -> None:
         try:
-            data = lay_chi_tiet_lan_kham(self.ma_phieu)
+            data = lay_chi_tiet_lan_kham(
+                self.ma_phieu, self.vai_tro, self.ma_nguoi_xem
+            )
         except Exception as error:
             hien_loi(self, error)
-            self.destroy()
             return
         info = data["thong_tin"]
+        self.read_only = (
+            self.vai_tro != "doctor" or info["trang_thai"] != "DANG_KHAM"
+        )
+        self._saved_symptoms = data["trieu_chung"] or ""
+        self._saved_diagnosis = data["chan_doan"] or ""
+        self.dirty = False
+        self.save_content_button.configure(
+            state="disabled" if self.read_only else "normal"
+        )
+        self.complete_button.configure(
+            state="disabled" if self.read_only else "normal"
+        )
+        self.export_button.configure(
+            state="normal" if info["trang_thai"] == "HOAN_THANH" else "disabled"
+        )
+        for name in ("add_lab_button", "edit_lab_button", "prescription_button"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.configure(state="disabled" if self.read_only else "normal")
         self.header.configure(
             text=(
                 f'Phiếu khám: {info["ma_phieu"]}    '
@@ -357,8 +429,8 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 f'Tổng chi phí ghi nhận: {dinh_dang_tien(info["tong_gia_tri"])}'
             )
         )
-        self._set_text(self.symptoms, data["trieu_chung"] or "Chưa ghi nhận.")
-        self._set_text(self.diagnosis, data["chan_doan"] or "Chưa ghi nhận.")
+        self._set_text(self.symptoms, self._saved_symptoms)
+        self._set_text(self.diagnosis, self._saved_diagnosis)
         for item in self.lab_table.get_children():
             self.lab_table.delete(item)
         for row in data["ds_xet_nghiem"]:
@@ -402,12 +474,79 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         if self.on_changed is not None:
             self.on_changed()
 
-    @staticmethod
-    def _set_text(widget: tk.Text, value: str) -> None:
+    def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.configure(state="normal")
         widget.delete("1.0", "end")
-        widget.insert("1.0", value)
-        widget.configure(state="disabled")
+        widget.insert("1.0", value or "")
+        widget.edit_modified(False)
+        widget.configure(state="normal" if not self.read_only else "disabled")
+
+    def _content_changed(self, event: tk.Event) -> None:
+        widget = event.widget
+        if not widget.edit_modified():
+            return
+        widget.edit_modified(False)
+        self.dirty = (
+            self.symptoms.get("1.0", "end").strip() != self._saved_symptoms
+            or self.diagnosis.get("1.0", "end").strip() != self._saved_diagnosis
+        )
+
+    def _save_content(self) -> bool:
+        try:
+            luu_noi_dung_kham(
+                self.ma_phieu,
+                self.symptoms.get("1.0", "end").strip(),
+                self.diagnosis.get("1.0", "end").strip(),
+            )
+        except Exception as error:
+            hien_loi(self, error)
+            return False
+        self._refresh()
+        return True
+
+    def _complete_visit(self) -> None:
+        if self.dirty and not self._save_content():
+            return
+        try:
+            hoan_thanh_phieu_kham(self.ma_phieu, self.ma_nguoi_xem)
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        messagebox.showinfo(
+            "Hoàn thành phiếu",
+            "Phiếu khám đã chuyển sang HOAN_THANH.",
+            parent=self,
+        )
+        self._refresh()
+        if self.on_changed is not None:
+            self.on_changed()
+
+    def _request_close(self) -> None:
+        if self.dirty and not xac_nhan_thay_doi_chua_luu(
+            self, self._save_content
+        ):
+            return
+        self.destroy()
+
+    def _export_report(self) -> None:
+        path_text = filedialog.asksaveasfilename(
+            parent=self,
+            title="Lưu báo cáo kết quả khám",
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            initialfile=f"ket_qua_kham_{self.ma_phieu}.pdf",
+        )
+        if not path_text:
+            return
+        try:
+            report = bao_cao_chi_tiet_phieu(self.ma_phieu)
+            xuat_bao_cao_phieu_kham_pdf(Path(path_text), report)
+        except Exception as error:
+            hien_loi(self, error, "Không thể xuất báo cáo")
+            return
+        messagebox.showinfo(
+            "Đã xuất báo cáo", f"Đã lưu báo cáo tại:\n{path_text}", parent=self
+        )
 
     def _selected_lab(self) -> dict[str, object] | None:
         selection = self.lab_table.selection()
@@ -415,7 +554,9 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             return None
         stt = int(selection[0])
         try:
-            detail = lay_chi_tiet_lan_kham(self.ma_phieu)
+            detail = lay_chi_tiet_lan_kham(
+                self.ma_phieu, self.vai_tro, self.ma_nguoi_xem
+            )
         except Exception as error:
             hien_loi(self, error)
             return None
@@ -444,6 +585,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         dialog.transient(self)
         form = KeDonView(dialog, ma_phieu=self.ma_phieu)
         form.pack(fill="both", expand=True)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: form.request_close(dialog.destroy))
         dialog.grab_set()
         self.wait_window(dialog)
         self._refresh()

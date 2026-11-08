@@ -1,27 +1,22 @@
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO
+from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO, Identifier
 from app.errors import AppError
 from app.pdf_export import xuat_bang_pdf
 from app.services.clinic_service import (
     bao_cao_bac_si,
-    lay_danh_sach_bac_si,
-    lay_khoa,
     lay_lich_su_benh_nhan,
     lay_tien_su_benh,
+    tim_phieu_dang_kham,
     tim_kiem_benh_nhan,
 )
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.appointment_views import DoctorAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
-
-
-ALL_DEPARTMENTS = "Tất cả khoa"
-ALL_DOCTORS = "Tất cả bác sĩ"
 
 
 class DoctorPortal(ttk.Frame):
@@ -45,7 +40,12 @@ class DoctorPortal(ttk.Frame):
             text=f'Khu vực bác sĩ — {doctor["ten_bac_si"]} (Mã {doctor["ma_bac_si"]})',
             font=("TkDefaultFont", 15, "bold"),
         ).grid(row=0, column=0, sticky="w")
-        ttk.Button(header, text="Đổi vai trò / đăng xuất", command=on_logout).grid(
+        ttk.Button(
+            header,
+            text="Đổi vai trò / đăng xuất",
+            command=on_logout,
+            style="Secondary.TButton",
+        ).grid(
             row=0, column=1, sticky="e"
         )
 
@@ -68,8 +68,6 @@ class DoctorPatientSearchView(ttk.Frame):
         self.doctor = doctor
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
-        self.departments: dict[str, int | None] = {ALL_DEPARTMENTS: None}
-        self.doctors: dict[str, int | None] = {ALL_DOCTORS: None}
 
         ttk.Label(
             self,
@@ -79,25 +77,36 @@ class DoctorPatientSearchView(ttk.Frame):
         filters = ttk.LabelFrame(self, text="Tìm kiếm và lọc", padding=8)
         filters.grid(row=1, column=0, sticky="ew", pady=8)
         filters.columnconfigure(1, weight=1)
-        ttk.Label(filters, text="Từ khóa").grid(row=0, column=0, sticky="w")
+        ttk.Label(filters, text="Mã / họ tên / điện thoại").grid(
+            row=0, column=0, sticky="w"
+        )
         self.keyword = ttk.Entry(filters)
         self.keyword.grid(row=0, column=1, sticky="ew", padx=6)
         self.keyword.bind("<Return>", self._search_event)
-        ttk.Label(filters, text="Khoa").grid(row=0, column=2, sticky="w", padx=(8, 0))
-        self.department = ttk.Combobox(filters, state="readonly", width=24)
-        self.department.grid(row=0, column=3, padx=6)
-        self.department.bind("<<ComboboxSelected>>", self._department_changed)
-        ttk.Label(filters, text="Bác sĩ").grid(row=0, column=4, sticky="w", padx=(8, 0))
-        self.doctor_choice = ttk.Combobox(filters, state="readonly", width=28)
-        self.doctor_choice.grid(row=0, column=5, padx=6)
-        ttk.Button(filters, text="Tìm", command=self._search).grid(
-            row=0, column=6, padx=(8, 0)
+        ttk.Label(filters, text="Ngày sinh").grid(row=0, column=2, sticky="w")
+        self.birth_date = ttk.Entry(filters, width=13)
+        self.birth_date.grid(row=0, column=3, padx=6)
+        ttk.Label(filters, text="Giới tính").grid(row=0, column=4, sticky="w")
+        self.gender = ttk.Combobox(
+            filters, state="readonly", width=12, values=("", "NAM", "NU", "KHAC")
+        )
+        self.gender.grid(row=0, column=5, padx=6)
+        ttk.Label(filters, text="Địa chỉ").grid(row=1, column=0, sticky="w", pady=6)
+        self.address = ttk.Entry(filters)
+        self.address.grid(row=1, column=1, sticky="ew", padx=6, pady=6)
+        ttk.Button(
+            filters,
+            text="Tìm",
+            command=self._search,
+            style="Primary.TButton",
+        ).grid(
+            row=1, column=5, padx=6, sticky="e"
         )
         ttk.Label(
             filters,
-            text="Tìm theo mã, họ tên, số điện thoại hoặc địa chỉ. Lọc khoa/bác sĩ dựa trên lịch sử phiếu khám.",
+            text="Ngày sinh dùng định dạng dd/mm/yyyy; để trống tiêu chí không cần lọc.",
             wraplength=950,
-        ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(6, 0))
+        ).grid(row=2, column=0, columnspan=6, sticky="w")
 
         table_frame = ttk.Frame(self)
         table_frame.grid(row=2, column=0, sticky="nsew")
@@ -145,6 +154,7 @@ class DoctorPatientSearchView(ttk.Frame):
             actions,
             text="Xem hồ sơ bệnh án",
             command=self._open_selected,
+            style="Primary.TButton",
         ).pack(side="left")
         ttk.Button(actions, text="Tải lại", command=self._search).pack(
             side="left", padx=8
@@ -153,58 +163,36 @@ class DoctorPatientSearchView(ttk.Frame):
             actions,
             text="Danh sách chỉ gồm bệnh nhân đã được nhập sẵn vào CSDL.",
         ).pack(side="right")
-        self._load_filters()
+        self.gender.set("")
         self._search()
-
-    def _load_filters(self) -> None:
-        try:
-            departments = lay_khoa()
-            doctors = lay_danh_sach_bac_si()
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self.departments = {ALL_DEPARTMENTS: None}
-        self.departments.update(
-            {
-                f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-                for row in departments
-            }
-        )
-        self.department["values"] = list(self.departments)
-        self.department.set(ALL_DEPARTMENTS)
-        self._set_doctors(doctors)
-
-    def _set_doctors(self, doctors: list[BacSiDTO]) -> None:
-        self.doctors = {ALL_DOCTORS: None}
-        self.doctors.update(
-            {
-                f'{row["ten_bac_si"]} (Mã {row["ma_bac_si"]})': row["ma_bac_si"]
-                for row in doctors
-            }
-        )
-        self.doctor_choice["values"] = list(self.doctors)
-        if self.doctor_choice.get() not in self.doctors:
-            self.doctor_choice.set(ALL_DOCTORS)
-
-    def _department_changed(self, _event: tk.Event | None = None) -> None:
-        department_id = self.departments.get(self.department.get())
-        try:
-            self._set_doctors(lay_danh_sach_bac_si(department_id))
-        except Exception as error:
-            hien_loi(self, error)
 
     def _search_event(self, _event: tk.Event) -> None:
         self._search()
 
     def _search(self) -> None:
-        department_id = self.departments.get(self.department.get())
-        doctor_id = self.doctors.get(self.doctor_choice.get())
         try:
+            birth_text = self.birth_date.get().strip()
+            birth_date = (
+                datetime.strptime(birth_text, "%d/%m/%Y").date()
+                if birth_text
+                else None
+            )
             patients = tim_kiem_benh_nhan(
                 self.keyword.get(),
-                ma_khoa=department_id,
-                ma_bac_si=doctor_id,
+                ngay_sinh=birth_date,
+                gioi_tinh=self.gender.get() or None,
+                dia_chi=self.address.get(),
             )
+        except ValueError:
+            hien_loi(
+                self,
+                AppError(
+                    "DU_LIEU_KHONG_HOP_LE",
+                    "Ngày sinh phải theo định dạng dd/mm/yyyy.",
+                    "ngay_sinh",
+                ),
+            )
+            return
         except Exception as error:
             hien_loi(self, error)
             return
@@ -232,7 +220,7 @@ class DoctorPatientSearchView(ttk.Frame):
                 "Hồ sơ bệnh án", "Hãy chọn một bệnh nhân.", parent=self
             )
             return
-        patient_id = int(selection[0])
+        patient_id = selection[0]
         values = self.table.item(selection[0], "values")
         patient = {
             "ma_benh_nhan": patient_id,
@@ -251,7 +239,7 @@ class PatientHistoryDialog(tk.Toplevel):
         self,
         parent: tk.Misc,
         patient: BenhNhanDTO,
-        ma_bac_si: int,
+        ma_bac_si: Identifier,
     ) -> None:
         super().__init__(parent)
         self.title(f'Hồ sơ bệnh án — {patient["ho_ten"]}')
@@ -350,12 +338,29 @@ class PatientHistoryDialog(tk.Toplevel):
             return
         PhieuKhamDetailDialog(
             self,
-            int(selection[0]),
-            read_only=False,
+            selection[0],
+            vai_tro="doctor",
+            ma_nguoi_xem=self.ma_bac_si,
             on_changed=self._refresh,
         )
 
     def _create_visit(self) -> None:
+        try:
+            existing_visit = tim_phieu_dang_kham(
+                self.patient["ma_benh_nhan"], self.ma_bac_si
+            )
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        if existing_visit is not None:
+            PhieuKhamDetailDialog(
+                self,
+                existing_visit,
+                vai_tro="doctor",
+                ma_nguoi_xem=self.ma_bac_si,
+                on_changed=self._refresh,
+            )
+            return
         dialog = TaoPhieuKhamDialog(
             self,
             self.patient["ma_benh_nhan"],
@@ -369,7 +374,8 @@ class PatientHistoryDialog(tk.Toplevel):
         PhieuKhamDetailDialog(
             self,
             dialog.result,
-            read_only=False,
+            vai_tro="doctor",
+            ma_nguoi_xem=self.ma_bac_si,
             on_changed=self._refresh,
         )
 
@@ -386,7 +392,7 @@ class DoctorReportView(ttk.Frame):
             text="Báo cáo giá trị khám theo bác sĩ",
             font=("TkDefaultFont", 16, "bold"),
         ).grid(row=0, column=0, sticky="w")
-        controls = ttk.LabelFrame(self, text="Kỳ báo cáo và bộ lọc", padding=8)
+        controls = ttk.LabelFrame(self, text="Kỳ báo cáo", padding=8)
         controls.grid(row=1, column=0, sticky="ew", pady=8)
         ttk.Label(controls, text="Tháng").grid(row=0, column=0, sticky="w")
         self.month = ttk.Combobox(
@@ -398,25 +404,9 @@ class DoctorReportView(ttk.Frame):
         self.year = ttk.Entry(controls, width=8)
         self.year.insert(0, str(today.year))
         self.year.grid(row=0, column=3, padx=5)
-        ttk.Label(controls, text="Khoa").grid(row=0, column=4, sticky="w")
-        self.department = ttk.Combobox(controls, state="readonly", width=24)
-        self.department.grid(row=0, column=5, padx=5)
-        ttk.Label(controls, text="Mã/tên bác sĩ").grid(
-            row=0, column=6, sticky="w", padx=(8, 0)
-        )
-        self.keyword = ttk.Entry(controls, width=22)
-        self.keyword.grid(row=0, column=7, padx=5)
-        self.include_empty = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            controls,
-            text="Hiện bác sĩ không có lượt khám",
-            variable=self.include_empty,
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Button(controls, text="Xem thống kê", command=self._refresh).grid(
-            row=1, column=7, sticky="e", pady=(8, 0)
+            row=0, column=4, padx=8
         )
-        self.departments: dict[str, int | None] = {ALL_DEPARTMENTS: None}
-        self._load_departments()
 
         summary = ttk.Frame(self, padding=8, relief="groove")
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 8))
@@ -436,23 +426,38 @@ class DoctorReportView(ttk.Frame):
         table_frame = ttk.Frame(content)
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        columns = ("ma_bac_si", "ten_bac_si", "khoa", "so_luot_kham", "tong_gia_tri")
+        columns = (
+            "ma_bac_si",
+            "ten_bac_si",
+            "so_luot_kham",
+            "so_benh_nhan",
+            "gia_kham",
+            "gia_xet_nghiem",
+            "gia_thuoc",
+            "tong_gia_tri",
+        )
         self.table = tao_bang(
             table_frame,
             columns,
             {
                 "ma_bac_si": "Mã bác sĩ",
                 "ten_bac_si": "Bác sĩ",
-                "khoa": "Khoa",
                 "so_luot_kham": "Số lượt khám",
+                "so_benh_nhan": "Số bệnh nhân",
+                "gia_kham": "Tiền khám",
+                "gia_xet_nghiem": "Tiền xét nghiệm",
+                "gia_thuoc": "Tiền thuốc",
                 "tong_gia_tri": "Tổng giá trị khám",
             },
             {
                 "ma_bac_si": 100,
                 "ten_bac_si": 220,
-                "khoa": 190,
-                "so_luot_kham": 130,
-                "tong_gia_tri": 210,
+                "so_luot_kham": 105,
+                "so_benh_nhan": 110,
+                "gia_kham": 145,
+                "gia_xet_nghiem": 145,
+                "gia_thuoc": 145,
+                "tong_gia_tri": 160,
             },
         )
         self.table.grid(row=0, column=0, sticky="nsew")
@@ -461,16 +466,28 @@ class DoctorReportView(ttk.Frame):
         )
         table_scroll.grid(row=0, column=1, sticky="ns")
         self.table.configure(yscrollcommand=table_scroll.set)
-        chart_frame = ttk.LabelFrame(
-            content, text="Top 8 bác sĩ theo tổng giá trị khám"
-        )
-        chart_frame.rowconfigure(0, weight=1)
+        chart_frame = ttk.Frame(content)
         chart_frame.columnconfigure(0, weight=1)
-        self.chart = tk.Canvas(
-            chart_frame, height=230, background="white", highlightthickness=0
-        )
-        self.chart.grid(row=0, column=0, sticky="nsew")
-        self.chart.bind("<Configure>", self._draw_chart)
+        chart_frame.columnconfigure(1, weight=1)
+        for column, title in enumerate(
+            ("Số lượt khám (thang riêng)", "Tổng giá trị ghi nhận (thang riêng)")
+        ):
+            chart = ttk.LabelFrame(chart_frame, text=title)
+            chart.grid(row=0, column=column, sticky="nsew", padx=(0, 5) if column == 0 else (5, 0))
+            chart.rowconfigure(0, weight=1)
+            chart.columnconfigure(0, weight=1)
+            canvas = tk.Canvas(chart, height=200, background="white", highlightthickness=0)
+            canvas.grid(row=0, column=0, sticky="nsew")
+            canvas.bind(
+                "<Configure>",
+                lambda event, target=canvas, metric=(
+                    "so_luot_kham" if column == 0 else "tong_gia_tri"
+                ): self._draw_chart(event, target, metric),
+            )
+            if column == 0:
+                self.visit_chart = canvas
+            else:
+                self.value_chart = canvas
         content.add(table_frame, weight=3)
         content.add(chart_frame, weight=2)
 
@@ -481,37 +498,19 @@ class DoctorReportView(ttk.Frame):
             text="Chi phí ghi nhận = giá khám áp dụng + xét nghiệm + thuốc; không phản ánh thanh toán.",
         ).pack(side="left")
         ttk.Button(
-            footer, text="Xuất báo cáo PDF", command=self._export_pdf
+            footer,
+            text="Xuất báo cáo PDF",
+            command=self._export_pdf,
+            style="Primary.TButton",
         ).pack(side="right")
         self.rows: list[BaoCaoBacSiRow] = []
         self._refresh()
-
-    def _load_departments(self) -> None:
-        try:
-            departments = lay_khoa()
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self.departments.update(
-            {
-                f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-                for row in departments
-            }
-        )
-        self.department["values"] = list(self.departments)
-        self.department.set(ALL_DEPARTMENTS)
 
     def _refresh(self) -> None:
         try:
             month = int(self.month.get())
             year = int(self.year.get().strip())
-            rows = bao_cao_bac_si(
-                month,
-                year,
-                ma_khoa=self.departments.get(self.department.get()),
-                tu_khoa=self.keyword.get(),
-                hien_bac_si_rong=self.include_empty.get(),
-            )
+            rows = bao_cao_bac_si(month, year)
         except ValueError:
             hien_loi(
                 self,
@@ -532,8 +531,11 @@ class DoctorReportView(ttk.Frame):
                 values=(
                     row["ma_bac_si"],
                     row["ten_bac_si"],
-                    row["ten_khoa"],
                     row["so_luot_kham"],
+                    row["so_benh_nhan"],
+                    dinh_dang_tien(row["gia_kham"]),
+                    dinh_dang_tien(row["gia_xet_nghiem"]),
+                    dinh_dang_tien(row["gia_thuoc"]),
                     dinh_dang_tien(row["tong_gia_tri"]),
                 ),
             )
@@ -547,23 +549,31 @@ class DoctorReportView(ttk.Frame):
         self.summary_value.configure(
             text=f"Tổng giá trị khám: {dinh_dang_tien(total_amount)}"
         )
-        self._draw_chart()
+        self._draw_chart(None, self.visit_chart, "so_luot_kham")
+        self._draw_chart(None, self.value_chart, "tong_gia_tri")
 
-    def _draw_chart(self, _event: tk.Event | None = None) -> None:
-        if not hasattr(self, "chart"):
+    def _draw_chart(
+        self,
+        _event: tk.Event | None,
+        canvas: tk.Canvas,
+        metric: str,
+    ) -> None:
+        if not hasattr(self, "rows"):
             return
-        canvas = self.chart
         canvas.delete("all")
         width = max(canvas.winfo_width(), 500)
         height = max(canvas.winfo_height(), 180)
-        rows = self.rows[:8]
+        rows = sorted(
+            self.rows,
+            key=lambda row: Decimal(str(row[metric] or 0)),
+            reverse=True,
+        )[:8]
         if not rows:
             canvas.create_text(
                 width // 2, height // 2, text="Không có dữ liệu cho bộ lọc hiện tại."
             )
             return
-        max_value = max(Decimal(str(row["tong_gia_tri"] or 0)) for row in rows)
-        max_value = max_value or Decimal("1")
+        max_value = max(Decimal(str(row[metric] or 0)) for row in rows) or Decimal("1")
         label_width = min(220, width // 3)
         value_width = 140
         chart_width = max(30, width - label_width - value_width - 35)
@@ -577,7 +587,7 @@ class DoctorReportView(ttk.Frame):
             canvas.create_text(
                 8, y + row_height // 2, text=name, anchor="w", fill="#20354A"
             )
-            value = Decimal(str(row["tong_gia_tri"] or 0))
+            value = Decimal(str(row[metric] or 0))
             bar_length = int(chart_width * value / max_value)
             if value > 0:
                 canvas.create_rectangle(
@@ -591,7 +601,11 @@ class DoctorReportView(ttk.Frame):
             canvas.create_text(
                 label_width + chart_width + 10,
                 y + row_height // 2,
-                text=dinh_dang_tien(value),
+                text=(
+                    str(int(value))
+                    if metric == "so_luot_kham"
+                    else dinh_dang_tien(value)
+                ),
                 anchor="w",
                 fill="#20354A",
             )
@@ -611,26 +625,32 @@ class DoctorReportView(ttk.Frame):
         )
         if not path_text:
             return
-        filters = [
-            f'Tháng {self.month.get()}/{self.year.get()}',
-            f'Khoa: {self.department.get() or ALL_DEPARTMENTS}',
-        ]
-        if self.keyword.get().strip():
-            filters.append(f'Bác sĩ: {self.keyword.get().strip()}')
+        filters = [f'Tháng {self.month.get()}/{self.year.get()}']
         try:
             xuat_bang_pdf(
                 Path(path_text),
                 "BÁO CÁO GIÁ TRỊ KHÁM THEO BÁC SĨ",
                 "; ".join(filters),
                 [
-                    {"key": "ma_bac_si", "label": "Mã BS", "kind": "int"},
+                    {"key": "ma_bac_si", "label": "Mã BS", "kind": "text"},
                     {"key": "ten_bac_si", "label": "Bác sĩ", "kind": "text"},
-                    {"key": "ten_khoa", "label": "Khoa", "kind": "text"},
                     {
                         "key": "so_luot_kham",
                         "label": "Số lượt khám",
                         "kind": "int",
                     },
+                    {
+                        "key": "so_benh_nhan",
+                        "label": "Số bệnh nhân",
+                        "kind": "int",
+                    },
+                    {"key": "gia_kham", "label": "Tiền khám", "kind": "money"},
+                    {
+                        "key": "gia_xet_nghiem",
+                        "label": "Tiền xét nghiệm",
+                        "kind": "money",
+                    },
+                    {"key": "gia_thuoc", "label": "Tiền thuốc", "kind": "money"},
                     {
                         "key": "tong_gia_tri",
                         "label": "Tổng giá trị khám",
@@ -641,6 +661,24 @@ class DoctorReportView(ttk.Frame):
                 {
                     "so_luot_kham": sum(
                         int(row["so_luot_kham"]) for row in self.rows
+                    ),
+                    "so_benh_nhan": sum(
+                        int(row["so_benh_nhan"]) for row in self.rows
+                    ),
+                    "gia_kham": sum(
+                        (Decimal(str(row["gia_kham"] or 0)) for row in self.rows),
+                        Decimal("0"),
+                    ),
+                    "gia_xet_nghiem": sum(
+                        (
+                            Decimal(str(row["gia_xet_nghiem"] or 0))
+                            for row in self.rows
+                        ),
+                        Decimal("0"),
+                    ),
+                    "gia_thuoc": sum(
+                        (Decimal(str(row["gia_thuoc"] or 0)) for row in self.rows),
+                        Decimal("0"),
                     ),
                     "tong_gia_tri": sum(
                         (

@@ -3,6 +3,7 @@ import tkinter as tk
 from app.demo_data import disable_demo_mode, enable_demo_mode
 from app.services.appointment_service import reset_appointment_sessions
 from app.ui.shell import ClinicShell
+from app.ui.styles import configure_styles
 
 
 class ClinicApp(tk.Tk):
@@ -13,6 +14,7 @@ class ClinicApp(tk.Tk):
             disable_demo_mode()
         reset_appointment_sessions()
         super().__init__()
+        configure_styles(self)
         self.title(
             "Quản lý khám bệnh ngoại trú và kê đơn"
             + (" — DEMO OFFLINE, không kết nối MySQL" if demo_mode else "")

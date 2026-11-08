@@ -15,11 +15,13 @@ from app.demo_data import (
 )
 from app.errors import AppError
 from app.services import appointment_service
-from app.services.clinic_service import tao_phieu_kham
+from app.services.clinic_service import hoan_thanh_phieu_kham, tao_phieu_kham
 from app.services.appointment_service import (
     cap_nhat_trang_thai,
+    cac_khung_gio_trong_ngay,
     dat_lich,
     doi_lich,
+    gan_phieu_vao_lich,
     gio_con_trong,
     gio_trong_30_ngay,
     huy_lich,
@@ -101,6 +103,24 @@ class AppointmentServiceTests(unittest.TestCase):
             lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"], "CANCELLED"
         )
 
+    def test_calendar_slots_include_available_and_booked_statuses(self) -> None:
+        booking_date = self._next_workday()
+        first_slot = self._next_slot(booking_date)
+        dat_lich(
+            DEMO_PATIENT_ID,
+            "Bệnh nhân A",
+            DEMO_DOCTOR_ID,
+            first_slot,
+        )
+
+        slots = dict(cac_khung_gio_trong_ngay(DEMO_DOCTOR_ID, booking_date))
+
+        self.assertEqual(slots[first_slot], "booked")
+        self.assertIn("available", slots.values())
+        self.assertEqual(
+            slots[first_slot + timedelta(minutes=30)], "available"
+        )
+
     def test_reschedule_keeps_old_booking_when_new_slot_is_unavailable(self) -> None:
         first_date = self._next_workday()
         second_date = self._next_workday(first_date)
@@ -169,6 +189,8 @@ class AppointmentServiceTests(unittest.TestCase):
             tao_phieu_kham(
                 970123, DEMO_PATIENT_ID, DEMO_DOCTOR_ID, "Triệu chứng", "Chẩn đoán"
             )
+            gan_phieu_vao_lich(1, DEMO_DOCTOR_ID, 970123)
+            hoan_thanh_phieu_kham(970123, DEMO_DOCTOR_ID)
             completed = cap_nhat_trang_thai(
                 1, DEMO_DOCTOR_ID, "COMPLETED", ma_phieu_kham=970123
             )

@@ -53,7 +53,7 @@ AND (
     %(ma_khoa)s IS NULL
     OR EXISTS (
         SELECT 1
-        FROM HoSoBenAn AS h
+        FROM HoSoBenhAn AS h
         JOIN PhieuKhamBenh AS p ON p.MaHoSo = h.MaHoSo
         JOIN BacSi AS bs ON bs.MaBacSi = p.MaBacSi
         WHERE h.MaBenhNhan = b.MaBenhNhan
@@ -64,7 +64,7 @@ AND (
     %(ma_bac_si)s IS NULL
     OR EXISTS (
         SELECT 1
-        FROM HoSoBenAn AS h
+        FROM HoSoBenhAn AS h
         JOIN PhieuKhamBenh AS p ON p.MaHoSo = h.MaHoSo
         WHERE h.MaBenhNhan = b.MaBenhNhan
           AND p.MaBacSi = %(ma_bac_si)s
@@ -76,7 +76,7 @@ ORDER BY b.HoTen, b.MaBenhNhan
 Q_HO_SO_BENH_AN = """
 SELECT MaHoSo AS ma_ho_so, MaBenhNhan AS ma_benh_nhan,
        NgayLap AS ngay_lap, TienSuBenh AS tien_su_benh
-FROM HoSoBenAn
+FROM HoSoBenhAn
 WHERE MaBenhNhan = %(ma_benh_nhan)s
 """
 
@@ -84,6 +84,7 @@ Q_LICH_SU_BENH_NHAN = """
 SELECT
     p.MaPhieuKhamBenh AS ma_phieu,
     p.NgayGioKham AS ngay_gio_kham,
+    p.TrangThaiPhieuKham AS trang_thai,
     p.MaBacSi AS ma_bac_si,
     bs.HoTen AS ten_bac_si,
     k.TenKhoa AS ten_khoa,
@@ -95,7 +96,7 @@ SELECT
     COALESCE(p.GiaKhamApDung, 0)
         + COALESCE(x.gia_xet_nghiem, 0)
         + COALESCE(d.gia_thuoc, 0) AS tong_chi_phi
-FROM HoSoBenAn AS h
+FROM HoSoBenhAn AS h
 JOIN PhieuKhamBenh AS p ON p.MaHoSo = h.MaHoSo
 JOIN BacSi AS bs ON bs.MaBacSi = p.MaBacSi
 JOIN Khoa AS k ON k.MaKhoa = bs.MaKhoa
@@ -112,12 +113,14 @@ LEFT JOIN (
     GROUP BY d.MaPhieuKhamBenh
 ) AS d ON d.MaPhieuKhamBenh = p.MaPhieuKhamBenh
 WHERE h.MaBenhNhan = %(ma_benh_nhan)s
+  AND p.TrangThaiPhieuKham = 'HOAN_THANH'
 ORDER BY p.NgayGioKham DESC, p.MaPhieuKhamBenh DESC
 """
 
 Q_PHIEU_TOM_TAT = """
 SELECT
     p.MaPhieuKhamBenh AS ma_phieu,
+    p.TrangThaiPhieuKham AS trang_thai,
     h.MaBenhNhan AS ma_benh_nhan,
     bn.HoTen AS ho_ten_benh_nhan,
     bn.SoDienThoai AS so_dien_thoai,
@@ -140,7 +143,7 @@ SELECT
         + COALESCE(x.gia_xet_nghiem, 0)
         + COALESCE(d.gia_thuoc, 0) AS tong_gia_tri
 FROM PhieuKhamBenh AS p
-JOIN HoSoBenAn AS h ON h.MaHoSo = p.MaHoSo
+JOIN HoSoBenhAn AS h ON h.MaHoSo = p.MaHoSo
 JOIN BenhNhan AS bn ON bn.MaBenhNhan = h.MaBenhNhan
 JOIN BacSi AS bs ON bs.MaBacSi = p.MaBacSi
 JOIN Khoa AS k ON k.MaKhoa = bs.MaKhoa
@@ -242,7 +245,7 @@ LEFT JOIN (
             + COALESCE(x.gia_xet_nghiem, 0)
             + COALESCE(d.gia_thuoc, 0) AS tong_gia_tri
     FROM PhieuKhamBenh AS pk
-    JOIN HoSoBenAn AS h ON h.MaHoSo = pk.MaHoSo
+    JOIN HoSoBenhAn AS h ON h.MaHoSo = pk.MaHoSo
     LEFT JOIN (
         SELECT MaPhieuKhamBenh, SUM(DonGiaApDung) AS gia_xet_nghiem
         FROM XetNghiem
@@ -271,7 +274,7 @@ ORDER BY tong_gia_tri DESC, bs.HoTen, bs.MaBacSi
 
 Q_LOCK_HO_SO_BENH_NHAN = """
 SELECT h.MaHoSo AS ma_ho_so
-FROM HoSoBenAn AS h
+FROM HoSoBenhAn AS h
 WHERE h.MaBenhNhan = %(ma_benh_nhan)s
 FOR UPDATE
 """
@@ -299,9 +302,13 @@ WHERE MaPhieuKhamBenh = %(ma_phieu)s
 """
 
 Q_LOCK_PHIEU_KHAM = """
-SELECT MaPhieuKhamBenh
-FROM PhieuKhamBenh
-WHERE MaPhieuKhamBenh = %(ma_phieu)s
+SELECT p.MaPhieuKhamBenh AS ma_phieu,
+       p.MaBacSi AS ma_bac_si,
+       p.TrangThaiPhieuKham AS trang_thai,
+       h.MaBenhNhan AS ma_benh_nhan
+FROM PhieuKhamBenh p
+JOIN HoSoBenhAn h ON h.MaHoSo = p.MaHoSo
+WHERE p.MaPhieuKhamBenh = %(ma_phieu)s
 FOR UPDATE
 """
 
