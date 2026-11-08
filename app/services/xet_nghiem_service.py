@@ -2,26 +2,26 @@ from datetime import datetime
 from decimal import Decimal
 from app.db import get_connection
 from app.errors import AppError, app_error_from_database
-from app.read_queries import (
-    Q_LOCK_PHIEU_KHAM,
-    Q_NEXT_STT_XET_NGHIEM,
-    Q_INSERT_XET_NGHIEM,
-    Q_LOCK_XET_NGHIEM,
-    Q_UPDATE_XET_NGHIEM,
-)
 
 
 def luu_xet_nghiem(
-    ma_phieu, ten_xet_nghiem, ket_qua, ngay_gio_thuc_hien, don_gia_ap_dung, stt=None
-):
+    ma_phieu: str,
+    ten_xet_nghiem: str,
+    ket_qua: str | None,
+    ngay_gio_thuc_hien: datetime | None,
+    don_gia_ap_dung: Decimal,
+    stt: int | None = None,
+) -> int:
+    ma_phieu = str(ma_phieu).strip()
+
     if not str(ten_xet_nghiem).strip():
         raise AppError(
-            "DU_LIEU_SAI", "Ten xet nghiem khong duoc de trong", "ten_xet_nghiem"
+            "DU_LIEU_SAI", "Tên xét nghiệm không được để trống", "ten_xet_nghiem"
         )
 
     if ket_qua and str(ket_qua).strip() and not ngay_gio_thuc_hien:
         raise AppError(
-            "DU_LIEU_SAI", "Can nhap ngay gio khi da co ket qua", "ngay_gio_thuc_hien"
+            "DU_LIEU_SAI", "Cần nhập ngày giờ khi đã có kết quả", "ngay_gio_thuc_hien"
         )
 
     connection = get_connection()
@@ -33,43 +33,64 @@ def luu_xet_nghiem(
         connection.start_transaction()
         cursor = connection.cursor(dictionary=True)
 
-        cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
+        # Khóa phiếu khám để chống xung đột (Concurrency Control)
+        cursor.execute(
+            "SELECT 1 FROM PhieuKhamBenh WHERE MaPhieuKhamBenh = %s FOR UPDATE",
+            (ma_phieu,),
+        )
         if not cursor.fetchone():
-            raise AppError("KHONG_THAY", "Khong tim thay phieu kham")
+            raise AppError("KHONG_THAY", "Không tìm thấy phiếu khám")
 
         if stt is None:
-            cursor.execute(Q_NEXT_STT_XET_NGHIEM, {"ma_phieu": ma_phieu})
+            # Lấy STT tiếp theo cho xét nghiệm mới
+            cursor.execute(
+                "SELECT COALESCE(MAX(STTXetNghiem), 0) + 1 AS stt FROM XetNghiem WHERE MaPhieuKhamBenh = %s",
+                (ma_phieu,),
+            )
             next_stt_row = cursor.fetchone()
             next_stt = (
                 int(next_stt_row["stt"]) if next_stt_row and next_stt_row["stt"] else 1
             )
 
+            sql_insert = """
+                INSERT INTO XetNghiem (MaPhieuKhamBenh, STTXetNghiem, TenXetNghiem, KetQuaXetNghiem, NgayGioThucHien, DonGiaApDung)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
             cursor.execute(
-                Q_INSERT_XET_NGHIEM,
-                {
-                    "ma_phieu": ma_phieu,
-                    "stt": next_stt,
-                    "ten_xet_nghiem": str(ten_xet_nghiem).strip(),
-                    "ket_qua": str(ket_qua).strip() if ket_qua else None,
-                    "ngay_gio_thuc_hien": ngay_gio_thuc_hien,
-                    "don_gia_ap_dung": price,
-                },
+                sql_insert,
+                (
+                    ma_phieu,
+                    next_stt,
+                    str(ten_xet_nghiem).strip(),
+                    str(ket_qua).strip() if ket_qua else None,
+                    ngay_gio_thuc_hien,
+                    price,
+                ),
             )
         else:
-            cursor.execute(Q_LOCK_XET_NGHIEM, {"ma_phieu": ma_phieu, "stt": stt})
-            if not cursor.fetchone():
-                raise AppError("KHONG_THAY", "Khong tim thay xet nghiem")
-
+            # Cập nhật xét nghiệm đã có
             cursor.execute(
-                Q_UPDATE_XET_NGHIEM,
-                {
-                    "ma_phieu": ma_phieu,
-                    "stt": stt,
-                    "ten_xet_nghiem": str(ten_xet_nghiem).strip(),
-                    "ket_qua": str(ket_qua).strip() if ket_qua else None,
-                    "ngay_gio_thuc_hien": ngay_gio_thuc_hien,
-                    "don_gia_ap_dung": price,
-                },
+                "SELECT 1 FROM XetNghiem WHERE MaPhieuKhamBenh = %s AND STTXetNghiem = %s FOR UPDATE",
+                (ma_phieu, stt),
+            )
+            if not cursor.fetchone():
+                raise AppError("KHONG_THAY", "Không tìm thấy xét nghiệm")
+
+            sql_update = """
+                UPDATE XetNghiem 
+                SET TenXetNghiem = %s, KetQuaXetNghiem = %s, NgayGioThucHien = %s, DonGiaApDung = %s
+                WHERE MaPhieuKhamBenh = %s AND STTXetNghiem = %s
+            """
+            cursor.execute(
+                sql_update,
+                (
+                    str(ten_xet_nghiem).strip(),
+                    str(ket_qua).strip() if ket_qua else None,
+                    ngay_gio_thuc_hien,
+                    price,
+                    ma_phieu,
+                    stt,
+                ),
             )
             next_stt = stt
 

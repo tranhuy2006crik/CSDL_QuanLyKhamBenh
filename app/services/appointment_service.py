@@ -102,19 +102,18 @@ def _time_from_value(value: time | timedelta) -> time:
     return time(hours, minutes, seconds)
 
 
-def _weekday(value: str) -> int:
-    normalized = unicodedata.normalize("NFD", value.casefold())
+def _weekday(value: Any) -> int:
+    value_str = str(value)
+    normalized = unicodedata.normalize("NFD", value_str.casefold())
     normalized = "".join(
-        character
-        for character in normalized
-        if unicodedata.category(character) != "Mn"
+        character for character in normalized if unicodedata.category(character) != "Mn"
     ).replace("đ", "d")
     normalized = " ".join(normalized.split())
     weekday = _WEEKDAYS.get(normalized)
     if weekday is None:
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE",
-            f"Không hiểu thứ trong lịch làm việc của bác sĩ: {value}.",
+            f"Không hiểu thứ trong lịch làm việc của bác sĩ: {value_str}.",
         )
     return weekday
 

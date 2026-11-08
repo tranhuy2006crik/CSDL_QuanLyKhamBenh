@@ -40,7 +40,6 @@ from app.read_queries import (
     Q_UPDATE_XET_NGHIEM,
 )
 
-
 logger = logging.getLogger(__name__)
 MAX_SQL_UNSIGNED_INT = 4_294_967_295
 
@@ -140,8 +139,10 @@ def lay_tien_su_benh(ma_benh_nhan: int) -> str | None:
     return row["tien_su_benh"]
 
 
-def _weekday_order(value: str) -> tuple[int, str]:
-    normalized = value.strip().casefold().replace("đ", "d")
+def _weekday_order(value: Any) -> tuple[int, str]:
+    # Ép kiểu value về chuỗi trước khi xử lý để chống sập
+    value_str = str(value)
+    normalized = value_str.strip().casefold().replace("đ", "d")
     aliases = (
         ("thu hai", "thứ hai", "thu 2", "thứ 2", "t2", "monday", "2"),
         ("thu ba", "thứ ba", "thu 3", "thứ 3", "t3", "tuesday", "3"),
@@ -153,8 +154,8 @@ def _weekday_order(value: str) -> tuple[int, str]:
     )
     for index, choices in enumerate(aliases):
         if normalized in choices:
-            return index, value
-    return len(aliases), value
+            return index, value_str
+    return len(aliases), value_str
 
 
 def _time_order(value: time | timedelta) -> float:
@@ -166,9 +167,7 @@ def _time_order(value: time | timedelta) -> float:
 def lay_lich_lam_viec(ma_khoa: int) -> list[LichLamViecDTO]:
     require_positive_int(ma_khoa, "ma_khoa", "Mã khoa")
     if is_demo_mode():
-        rows = cast(
-            list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa)
-        )
+        rows = cast(list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa))
         rows.sort(
             key=lambda row: (
                 row["ten_bac_si"].casefold(),
@@ -234,13 +233,10 @@ def bao_cao_bac_si(
     )
 
 
-def _validate_id(value: int, field: str, label: str) -> None:
-    require_positive_int(value, field, label)
-    if value > MAX_SQL_UNSIGNED_INT:
+def _validate_id(value: str, field_name: str, label: str) -> None:
+    if not value or not str(value).strip():
         raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            f"{label} vượt phạm vi INT UNSIGNED.",
-            field,
+            "DU_LIEU_KHONG_HOP_LE", f"{label} không được để trống.", field_name
         )
 
 
@@ -282,9 +278,7 @@ def tao_phieu_kham(
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
     _validate_id(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
-    cleaned_symptoms = _clean_optional_text(
-        trieu_chung, "trieu_chung", "Triệu chứng"
-    )
+    cleaned_symptoms = _clean_optional_text(trieu_chung, "trieu_chung", "Triệu chứng")
     cleaned_diagnosis = _clean_optional_text(chan_doan, "chan_doan", "Chẩn đoán")
 
     if is_demo_mode():
@@ -358,6 +352,47 @@ def tao_phieu_kham(
         _close_transaction(cursor, connection)
 
 
+def chot_phieu_kham(ma_phieu: str) -> None:
+    ma_phieu = str(ma_phieu).strip()
+    connection = get_connection()
+    cursor = None
+    try:
+        connection.start_transaction()
+        cursor = connection.cursor()
+
+        sql_chot_phieu = """
+            UPDATE PhieuKhamBenh 
+            SET TrangThaiPhieuKham = 'HOAN_THANH' 
+            WHERE MaPhieuKhamBenh = %s 
+              AND TrangThaiPhieuKham = 'DANG_KHAM'
+              AND ChanDoan IS NOT NULL AND TRIM(ChanDoan) <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM XetNghiem 
+                  WHERE MaPhieuKhamBenh = %s 
+                    AND (KetQuaXetNghiem IS NULL OR TRIM(KetQuaXetNghiem) = '')
+              )
+        """
+        cursor.execute(sql_chot_phieu, (ma_phieu, ma_phieu))
+
+        if cursor.rowcount == 0:
+            raise AppError(
+                "KHONG_THE_HOAN_THANH",
+                "Không thể hoàn thành phiếu. Vui lòng kiểm tra: Phiếu đã chẩn đoán chưa? Các xét nghiệm đã có kết quả chưa?",
+            )
+
+        connection.commit()
+    except AppError:
+        connection.rollback()
+        raise
+    except Exception as error:
+        connection.rollback()
+        raise AppError("LOI_HE_THONG", "Lỗi CSDL khi chốt phiếu.") from error
+    finally:
+        if cursor:
+            cursor.close()
+        connection.close()
+
+
 def luu_noi_dung_kham(
     ma_phieu: int,
     trieu_chung: str | None,
@@ -366,15 +401,11 @@ def luu_noi_dung_kham(
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
     params = {
         "ma_phieu": ma_phieu,
-        "trieu_chung": _clean_optional_text(
-            trieu_chung, "trieu_chung", "Triệu chứng"
-        ),
+        "trieu_chung": _clean_optional_text(trieu_chung, "trieu_chung", "Triệu chứng"),
         "chan_doan": _clean_optional_text(chan_doan, "chan_doan", "Chẩn đoán"),
     }
     if is_demo_mode():
-        demo_data().update_visit(
-            ma_phieu, params["trieu_chung"], params["chan_doan"]
-        )
+        demo_data().update_visit(ma_phieu, params["trieu_chung"], params["chan_doan"])
         return
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
@@ -438,9 +469,7 @@ def luu_xet_nghiem(
             "Cần nhập ngày giờ thực hiện khi đã có kết quả.",
             "ngay_gio_thuc_hien",
         )
-    if ngay_gio_thuc_hien is not None and not isinstance(
-        ngay_gio_thuc_hien, datetime
-    ):
+    if ngay_gio_thuc_hien is not None and not isinstance(ngay_gio_thuc_hien, datetime):
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE",
             "Ngày giờ thực hiện không hợp lệ.",
