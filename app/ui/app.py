@@ -1,54 +1,42 @@
 import tkinter as tk
-from tkinter import ttk
 
-from app.ui.views.placeholder import PlaceholderView
+from app.demo_data import disable_demo_mode, enable_demo_mode
+from app.services.appointment_service import reset_appointment_sessions
+from app.ui.shell import ClinicShell
+from app.ui.styles import configure_styles
 
 
 class ClinicApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, demo_mode: bool = False) -> None:
+        if demo_mode:
+            enable_demo_mode()
+        else:
+            disable_demo_mode()
+        reset_appointment_sessions()
         super().__init__()
-        self.title("Quản lý khám bệnh ngoại trú và kê đơn")
-        self.geometry("1100x700")
-        self.minsize(850, 560)
-
-        self.columnconfigure(1, weight=1)
+        configure_styles(self)
+        self.title(
+            "Quản lý khám bệnh ngoại trú và kê đơn"
+            + (" — DEMO OFFLINE, không kết nối MySQL" if demo_mode else "")
+        )
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        width = min(1250, screen_width - 40)
+        height = min(760, screen_height - 120)
+        self.geometry(
+            f"{width}x{height}"
+            f"+{max(0, (screen_width - width) // 2)}"
+            f"+{max(0, (screen_height - height) // 2 - 20)}"
+        )
+        self.minsize(min(1000, width), min(620, height))
         self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
 
-        navigation = ttk.Frame(self, padding=12)
-        navigation.grid(row=0, column=0, sticky="ns")
-        navigation.columnconfigure(0, weight=1)
+        self.shell = ClinicShell(self, demo_mode=demo_mode)
+        self.shell.grid(row=0, column=0, sticky="nsew")
+        self.protocol("WM_DELETE_WINDOW", self._close)
 
-        ttk.Label(
-            navigation,
-            text="QUẢN LÝ KHÁM BỆNH",
-            font=("TkDefaultFont", 11, "bold"),
-        ).grid(row=0, column=0, sticky="w", pady=(0, 16))
-
-        self.content = ttk.Frame(self, padding=24)
-        self.content.grid(row=0, column=1, sticky="nsew")
-        self.content.columnconfigure(0, weight=1)
-
-        screens = (
-            ("Trang chủ", "Trang chủ"),
-            ("Xét nghiệm", "Chỉ định và kết quả xét nghiệm"),
-            ("Kê đơn thuốc", "Lập và quản lý đơn thuốc"),
-            ("Tìm kiếm lần khám", "Tìm kiếm và xem chi tiết lần khám"),
-            ("Báo cáo lượt khám", "Báo cáo số lượt khám theo bác sĩ"),
-            ("Báo cáo giá trị", "Báo cáo giá trị khám, xét nghiệm và thuốc"),
-        )
-        for row, (label, title) in enumerate(screens, start=1):
-            ttk.Button(
-                navigation,
-                text=label,
-                command=lambda screen_title=title: self.show_screen(screen_title),
-            ).grid(row=row, column=0, sticky="ew", pady=3)
-
-        self.show_screen("Trang chủ")
-
-    def show_screen(self, title: str) -> None:
-        for child in self.content.winfo_children():
-            child.destroy()
-
-        PlaceholderView(self.content, title=title).grid(
-            row=0, column=0, sticky="nsew"
-        )
+    def _close(self) -> None:
+        reset_appointment_sessions()
+        disable_demo_mode()
+        self.destroy()
