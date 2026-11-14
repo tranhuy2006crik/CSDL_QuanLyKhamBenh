@@ -164,6 +164,7 @@ def bao_cao_chi_tiet_phieu(ma_phieu: Identifier) -> dict[str, Any]:
                 "bac_si": info["ten_bac_si"],
                 "chan_doan": detail["chan_doan"],
                 "trieu_chung": detail["trieu_chung"],
+                "dia_chi": info.get("dia_chi"),
             },
             "ds_xet_nghiem": [
                 {
@@ -214,6 +215,7 @@ def bao_cao_chi_tiet_phieu(ma_phieu: Identifier) -> dict[str, Any]:
             "bac_si": patient["BacSiKham"],
             "chan_doan": patient["ChanDoan"],
             "trieu_chung": patient["TrieuChung"],
+            "dia_chi": patient.get("DiaChi", ""),
         },
         "ds_xet_nghiem": [
             {
@@ -249,9 +251,7 @@ def bao_cao_chi_tiet_phieu(ma_phieu: Identifier) -> dict[str, Any]:
     }
 
 
-def tinh_tinh_trang_xet_nghiem(
-    so_xet_nghiem: int, so_xet_nghiem_cho: int
-) -> str:
+def tinh_tinh_trang_xet_nghiem(so_xet_nghiem: int, so_xet_nghiem_cho: int) -> str:
     if so_xet_nghiem == 0:
         return CHUA_CHI_DINH
     if so_xet_nghiem_cho > 0:

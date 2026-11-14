@@ -50,7 +50,6 @@ from app.read_queries import (
     Q_UPDATE_XET_NGHIEM,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -127,7 +126,10 @@ def tim_kiem_benh_nhan(
                 row
                 for row in rows
                 if (ngay_sinh is None or row["ngay_sinh"] == ngay_sinh)
-                and (not gioi_tinh or (row["gioi_tinh"] or "").upper() == gioi_tinh.upper())
+                and (
+                    not gioi_tinh
+                    or (row["gioi_tinh"] or "").upper() == gioi_tinh.upper()
+                )
                 and address.casefold() in (row["dia_chi"] or "").casefold()
             ],
         )
@@ -210,9 +212,7 @@ def _time_order(value: time | timedelta) -> float:
 def lay_lich_lam_viec(ma_khoa: Identifier) -> list[LichLamViecDTO]:
     require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
     if is_demo_mode():
-        rows = cast(
-            list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa)
-        )
+        rows = cast(list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa))
         rows.sort(
             key=lambda row: (
                 row["ten_bac_si"].casefold(),
@@ -324,9 +324,7 @@ def tao_phieu_kham(
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
     _validate_id(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
     _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
-    cleaned_symptoms = _clean_optional_text(
-        trieu_chung, "trieu_chung", "Triệu chứng"
-    )
+    cleaned_symptoms = _clean_optional_text(trieu_chung, "trieu_chung", "Triệu chứng")
     cleaned_diagnosis = _clean_optional_text(chan_doan, "chan_doan", "Chẩn đoán")
 
     if is_demo_mode():
@@ -408,15 +406,11 @@ def luu_noi_dung_kham(
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
     params = {
         "ma_phieu": ma_phieu,
-        "trieu_chung": _clean_optional_text(
-            trieu_chung, "trieu_chung", "Triệu chứng"
-        ),
+        "trieu_chung": _clean_optional_text(trieu_chung, "trieu_chung", "Triệu chứng"),
         "chan_doan": _clean_optional_text(chan_doan, "chan_doan", "Chẩn đoán"),
     }
     if is_demo_mode():
-        demo_data().update_visit(
-            ma_phieu, params["trieu_chung"], params["chan_doan"]
-        )
+        demo_data().update_visit(ma_phieu, params["trieu_chung"], params["chan_doan"])
         return
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
@@ -485,9 +479,7 @@ def luu_xet_nghiem(
             "Cần nhập ngày giờ thực hiện khi đã có kết quả.",
             "ngay_gio_thuc_hien",
         )
-    if ngay_gio_thuc_hien is not None and not isinstance(
-        ngay_gio_thuc_hien, datetime
-    ):
+    if ngay_gio_thuc_hien is not None and not isinstance(ngay_gio_thuc_hien, datetime):
         raise AppError(
             "DU_LIEU_KHONG_HOP_LE",
             "Ngày giờ thực hiện không hợp lệ.",
@@ -630,7 +622,9 @@ def hoan_thanh_phieu_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
         if visit["ma_bac_si"] != ma_bac_si:
-            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu.")
+            raise AppError(
+                "KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu."
+            )
         if visit["trang_thai"] != "DANG_KHAM":
             raise AppError("PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành.")
         cursor.execute(Q_COMPLETE_VISIT, (ma_phieu, ma_phieu))
@@ -798,3 +792,16 @@ def xoa_phieu_dang_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
         raise
     finally:
         _close_transaction(cursor, connection)
+
+
+def lay_ho_so_benh_an(ma_benh_nhan: Identifier) -> dict[str, Any] | None:
+    require_identifier(ma_benh_nhan, "ma_benh_nhan", "Mã bệnh nhân")
+    if is_demo_mode():
+        tien_su = demo_data().medical_history(ma_benh_nhan)
+        return (
+            {"ngay_lap": date.today(), "tien_su_benh": tien_su}
+            if tien_su is not None
+            else None
+        )
+
+    return _get_one(Q_HO_SO_BENH_AN, {"ma_benh_nhan": ma_benh_nhan})

@@ -3,6 +3,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from collections.abc import Callable
+
+try:
+    from tkcalendar import DateEntry
+
+    HAS_CALENDAR = True
+except ImportError:
+    HAS_CALENDAR = False
 
 from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO, Identifier
 from app.errors import AppError
@@ -11,6 +19,7 @@ from app.services.clinic_service import (
     bao_cao_bac_si,
     lay_lich_su_benh_nhan,
     lay_tien_su_benh,
+    lay_ho_so_benh_an,
     tim_phieu_dang_kham,
     tim_kiem_benh_nhan,
 )
@@ -45,9 +54,7 @@ class DoctorPortal(ttk.Frame):
             text="Đổi vai trò / đăng xuất",
             command=on_logout,
             style="Secondary.TButton",
-        ).grid(
-            row=0, column=1, sticky="e"
-        )
+        ).grid(row=0, column=1, sticky="e")
 
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=1, column=0, sticky="nsew")
@@ -64,62 +71,86 @@ class DoctorPortal(ttk.Frame):
 
 class DoctorPatientSearchView(ttk.Frame):
     def __init__(self, parent: tk.Misc, doctor: BacSiDTO) -> None:
-        super().__init__(parent, padding=12)
+        super().__init__(parent)
         self.doctor = doctor
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.search_frame = ttk.Frame(self, padding=12)
+        self.search_frame.grid(row=0, column=0, sticky="nsew")
+        self.search_frame.columnconfigure(0, weight=1)
+        self.search_frame.rowconfigure(2, weight=1)
 
         ttk.Label(
-            self,
+            self.search_frame,
             text="Tra cứu bệnh nhân",
             font=("TkDefaultFont", 16, "bold"),
         ).grid(row=0, column=0, sticky="w")
-        filters = ttk.LabelFrame(self, text="Tìm kiếm và lọc", padding=8)
+
+        filters = ttk.LabelFrame(self.search_frame, text="Tìm kiếm và lọc", padding=8)
         filters.grid(row=1, column=0, sticky="ew", pady=8)
         filters.columnconfigure(1, weight=1)
-        ttk.Label(filters, text="Mã / họ tên / điện thoại").grid(
+
+        ttk.Label(filters, text="Mã / Họ tên / Số điện thoại").grid(
             row=0, column=0, sticky="w"
         )
         self.keyword = ttk.Entry(filters)
         self.keyword.grid(row=0, column=1, sticky="ew", padx=6)
         self.keyword.bind("<Return>", self._search_event)
-        ttk.Label(filters, text="Ngày sinh").grid(row=0, column=2, sticky="w")
-        self.birth_date = ttk.Entry(filters, width=13)
-        self.birth_date.grid(row=0, column=3, padx=6)
-        ttk.Label(filters, text="Giới tính").grid(row=0, column=4, sticky="w")
+
+        ttk.Label(filters, text="Ngày sinh").grid(
+            row=1, column=0, sticky="w", pady=(4, 0)
+        )
+        if HAS_CALENDAR:
+            self.birth_date = DateEntry(
+                filters,
+                width=12,
+                background="darkblue",
+                foreground="white",
+                borderwidth=2,
+                date_pattern="dd/mm/yyyy",
+            )
+            self.birth_date.delete(
+                0, "end"
+            )  
+        else:
+            self.birth_date = ttk.Entry(filters, width=14)
+        self.birth_date.grid(row=1, column=1, sticky="w", padx=6, pady=(4, 0))
+
+        ttk.Label(filters, text="Giới tính").grid(
+            row=2, column=0, sticky="w", pady=(4, 0)
+        )
         self.gender = ttk.Combobox(
             filters, state="readonly", width=12, values=("", "NAM", "NU", "KHAC")
         )
-        self.gender.grid(row=0, column=5, padx=6)
-        ttk.Label(filters, text="Địa chỉ").grid(row=1, column=0, sticky="w", pady=6)
-        self.address = ttk.Entry(filters)
-        self.address.grid(row=1, column=1, sticky="ew", padx=6, pady=6)
-        ttk.Button(
-            filters,
-            text="Tìm",
-            command=self._search,
-            style="Primary.TButton",
-        ).grid(
-            row=1, column=5, padx=6, sticky="e"
-        )
-        ttk.Label(
-            filters,
-            text="Ngày sinh dùng định dạng dd/mm/yyyy; để trống tiêu chí không cần lọc.",
-            wraplength=950,
-        ).grid(row=2, column=0, columnspan=6, sticky="w")
+        self.gender.grid(row=2, column=1, sticky="w", padx=6, pady=(4, 0))
 
-        table_frame = ttk.Frame(self)
+        ttk.Label(filters, text="Địa chỉ").grid(
+            row=3, column=0, sticky="w", pady=(4, 0)
+        )
+        self.address = ttk.Entry(filters)
+        self.address.grid(row=3, column=1, sticky="ew", padx=6, pady=(4, 0))
+
+        btn_frame = ttk.Frame(filters)
+        btn_frame.grid(row=4, column=1, sticky="e", pady=(8, 0))
+
+        ttk.Button(
+            btn_frame,
+            text="Xóa lọc",
+            command=self._clear_filters,
+            style="Secondary.TButton",
+        ).pack(side="left", padx=(0, 8))
+
+        ttk.Button(
+            btn_frame, text="Tìm", command=self._search, style="Primary.TButton"
+        ).pack(side="left")
+
+        table_frame = ttk.Frame(self.search_frame)
         table_frame.grid(row=2, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        columns = (
-            "ma_bn",
-            "ho_ten",
-            "dien_thoai",
-            "nam_sinh",
-            "gioi_tinh",
-            "dia_chi",
-        )
+
+        columns = ("ma_bn", "ho_ten", "dien_thoai", "nam_sinh", "gioi_tinh", "dia_chi")
         self.table = tao_bang(
             table_frame,
             columns,
@@ -132,14 +163,22 @@ class DoctorPatientSearchView(ttk.Frame):
                 "dia_chi": "Địa chỉ",
             },
             {
-                "ma_bn": 110,
-                "ho_ten": 200,
-                "dien_thoai": 145,
-                "nam_sinh": 90,
-                "gioi_tinh": 100,
-                "dia_chi": 300,
+                "ma_bn": 100,
+                "ho_ten": 150,
+                "dien_thoai": 110,
+                "nam_sinh": 80,
+                "gioi_tinh": 80,
+                "dia_chi": 150,
             },
         )
+
+        self.table.column("ma_bn", anchor="center")
+        self.table.column("ho_ten", anchor="w")
+        self.table.column("dien_thoai", anchor="center")
+        self.table.column("nam_sinh", anchor="center")
+        self.table.column("gioi_tinh", anchor="center")
+        self.table.column("dia_chi", anchor="w")
+
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -148,7 +187,7 @@ class DoctorPatientSearchView(ttk.Frame):
         self.table.configure(yscrollcommand=scrollbar.set)
         self.table.bind("<Double-1>", self._open_selected)
 
-        actions = ttk.Frame(self)
+        actions = ttk.Frame(self.search_frame)
         actions.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(
             actions,
@@ -159,11 +198,14 @@ class DoctorPatientSearchView(ttk.Frame):
         ttk.Button(actions, text="Tải lại", command=self._search).pack(
             side="left", padx=8
         )
-        ttk.Label(
-            actions,
-            text="Danh sách chỉ gồm bệnh nhân đã được nhập sẵn vào CSDL.",
-        ).pack(side="right")
+
+        self._clear_filters()
+
+    def _clear_filters(self) -> None:
+        self.keyword.delete(0, "end")
+        self.birth_date.delete(0, "end")
         self.gender.set("")
+        self.address.delete(0, "end")
         self._search()
 
     def _search_event(self, _event: tk.Event) -> None:
@@ -173,9 +215,7 @@ class DoctorPatientSearchView(ttk.Frame):
         try:
             birth_text = self.birth_date.get().strip()
             birth_date = (
-                datetime.strptime(birth_text, "%d/%m/%Y").date()
-                if birth_text
-                else None
+                datetime.strptime(birth_text, "%d/%m/%Y").date() if birth_text else None
             )
             patients = tim_kiem_benh_nhan(
                 self.keyword.get(),
@@ -196,6 +236,7 @@ class DoctorPatientSearchView(ttk.Frame):
         except Exception as error:
             hien_loi(self, error)
             return
+
         for item in self.table.get_children():
             self.table.delete(item)
         for patient in patients:
@@ -216,9 +257,6 @@ class DoctorPatientSearchView(ttk.Frame):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if not selection:
-            messagebox.showinfo(
-                "Hồ sơ bệnh án", "Hãy chọn một bệnh nhân.", parent=self
-            )
             return
         patient_id = selection[0]
         values = self.table.item(selection[0], "values")
@@ -231,41 +269,106 @@ class DoctorPatientSearchView(ttk.Frame):
             "gioi_tinh": values[4],
             "dia_chi": values[5],
         }
-        PatientHistoryDialog(self, patient, self.doctor["ma_bac_si"])
+
+        self.search_frame.grid_remove()
+
+        if hasattr(self, "history_frame") and self.history_frame.winfo_exists():
+            self.history_frame.destroy()
+
+        self.history_frame = PatientHistoryViewEmbedded(
+            self, patient, self.doctor["ma_bac_si"], self._show_search_view
+        )
+        self.history_frame.grid(row=0, column=0, sticky="nsew")
+
+    def _show_search_view(self) -> None:
+        if hasattr(self, "history_frame") and self.history_frame.winfo_exists():
+            self.history_frame.destroy()
+        self.search_frame.grid()
 
 
-class PatientHistoryDialog(tk.Toplevel):
+class PatientHistoryViewEmbedded(ttk.Frame):
     def __init__(
         self,
         parent: tk.Misc,
         patient: BenhNhanDTO,
         ma_bac_si: Identifier,
+        on_back: Callable[[], None],
     ) -> None:
-        super().__init__(parent)
-        self.title(f'Hồ sơ bệnh án — {patient["ho_ten"]}')
-        self.geometry("1000x650")
-        self.minsize(820, 520)
-        self.transient(parent)
+        super().__init__(parent, padding=12)
         self.patient = patient
         self.ma_bac_si = ma_bac_si
+        self.on_back = on_back
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        top_frame = ttk.Frame(self)
+        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        top_frame.columnconfigure(1, weight=1)
+
+        ttk.Button(
+            top_frame,
+            text="← Quay lại danh sách",
+            command=self.on_back,
+            style="Secondary.TButton",
+        ).grid(row=0, column=0, sticky="w")
+
         ttk.Label(
-            self,
-            text=(
-                f'Hồ sơ bệnh án: {patient["ho_ten"]} '
-                f'(Mã bệnh nhân {patient["ma_benh_nhan"]})'
-            ),
-            font=("TkDefaultFont", 14, "bold"),
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=12)
-        self.medical_history = ttk.Label(
-            self, text="Tiền sử bệnh: —", wraplength=950, justify="left"
+            top_frame,
+            text="HỒ SƠ BỆNH ÁN",
+            font=("TkDefaultFont", 18, "bold"),
+            anchor="center",
+        ).grid(row=0, column=1, sticky="ew")
+
+        ttk.Label(
+            top_frame,
+            text=f'Ngày lập: {datetime.now().strftime("%d/%m/%Y")}',
+            foreground="gray",
+        ).grid(row=0, column=2, sticky="e")
+
+        info_frame = ttk.Frame(self)
+        info_frame.grid(row=1, column=0, sticky="ew", pady=(0, 15))
+        info_frame.columnconfigure(0, weight=1)  
+        info_frame.columnconfigure(1, weight=2)  
+
+        patient_info_box = ttk.LabelFrame(
+            info_frame, text="Thông tin bệnh nhân", padding=8
         )
-        self.medical_history.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
-        table_frame = ttk.Frame(self, padding=(12, 0))
+        patient_info_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        ttk.Label(
+            patient_info_box,
+            text=f"Họ tên: {patient['ho_ten']}",
+            font=("TkDefaultFont", 10, "bold"),
+            foreground="#1677A5",
+        ).pack(anchor="w", pady=2)
+        ttk.Label(patient_info_box, text=f"Mã BN: {patient['ma_benh_nhan']}").pack(
+            anchor="w", pady=2
+        )
+        ttk.Label(
+            patient_info_box, text=f"Năm sinh: {patient['nam_sinh'] or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Giới tính: {patient['gioi_tinh'] or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Điện thoại: {patient['so_dien_thoai'] or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(patient_info_box, text=f"Địa chỉ: {patient['dia_chi'] or '—'}").pack(
+            anchor="w", pady=2
+        )
+
+        history_box = ttk.LabelFrame(info_frame, text="Tiền sử bệnh", padding=8)
+        history_box.grid(row=0, column=1, sticky="nsew")
+        self.medical_history = ttk.Label(
+            history_box, text="—", wraplength=600, justify="left"
+        )
+        self.medical_history.pack(anchor="w", fill="both", expand=True)
+
+        table_frame = ttk.Frame(self)
         table_frame.grid(row=2, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
+
         columns = ("ma_phieu", "ngay_gio", "bac_si", "khoa", "chan_doan", "tong")
         self.table = tao_bang(
             table_frame,
@@ -279,27 +382,42 @@ class PatientHistoryDialog(tk.Toplevel):
                 "tong": "Tổng chi phí",
             },
             {
-                "ma_phieu": 90,
-                "ngay_gio": 150,
-                "bac_si": 170,
-                "khoa": 130,
-                "chan_doan": 230,
-                "tong": 150,
+                "ma_phieu": 80,
+                "ngay_gio": 140,
+                "bac_si": 160,
+                "khoa": 120,
+                "chan_doan": 250,
+                "tong": 120,
             },
         )
+
+        self.table.column("ma_phieu", anchor="center")
+        self.table.column("ngay_gio", anchor="center")
+        self.table.column("bac_si", anchor="center")
+        self.table.column("khoa", anchor="center")
+        self.table.column("chan_doan", anchor="w")  
+        self.table.column("tong", anchor="e")  
+
         self.table.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=self.table.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.table.configure(yscrollcommand=scrollbar.set)
         self.table.bind("<Double-1>", self._open_selected)
-        actions = ttk.Frame(self, padding=12)
+
+        actions = ttk.Frame(self, padding=(0, 12, 0, 0))
         actions.grid(row=3, column=0, sticky="ew")
         ttk.Button(
             actions, text="Xem chi tiết phiếu", command=self._open_selected
         ).pack(side="left")
         ttk.Button(
             actions,
-            text="Tạo phiếu khám",
+            text="Tạo phiếu khám mới",
             command=self._create_visit,
+            style="Success.TButton",
         ).pack(side="left", padx=8)
-        ttk.Button(actions, text="Đóng", command=self.destroy).pack(side="right")
+
         self._refresh()
 
     def _refresh(self) -> None:
@@ -309,9 +427,7 @@ class PatientHistoryDialog(tk.Toplevel):
         except Exception as error:
             hien_loi(self, error)
             return
-        self.medical_history.configure(
-            text=f"Tiền sử bệnh: {medical_history or 'Chưa ghi nhận.'}"
-        )
+        self.medical_history.configure(text=medical_history or "Chưa ghi nhận.")
         for item in self.table.get_children():
             self.table.delete(item)
         for visit in visits:
@@ -332,12 +448,10 @@ class PatientHistoryDialog(tk.Toplevel):
     def _open_selected(self, _event: tk.Event | None = None) -> None:
         selection = self.table.selection()
         if not selection:
-            messagebox.showinfo(
-                "Phiếu khám", "Hãy chọn một phiếu khám.", parent=self
-            )
+            messagebox.showinfo("Phiếu khám", "Hãy chọn một phiếu khám.", parent=self)
             return
         PhieuKhamDetailDialog(
-            self,
+            self.winfo_toplevel(),
             selection[0],
             vai_tro="doctor",
             ma_nguoi_xem=self.ma_bac_si,
@@ -354,7 +468,7 @@ class PatientHistoryDialog(tk.Toplevel):
             return
         if existing_visit is not None:
             PhieuKhamDetailDialog(
-                self,
+                self.winfo_toplevel(),
                 existing_visit,
                 vai_tro="doctor",
                 ma_nguoi_xem=self.ma_bac_si,
@@ -362,7 +476,7 @@ class PatientHistoryDialog(tk.Toplevel):
             )
             return
         dialog = TaoPhieuKhamDialog(
-            self,
+            self.winfo_toplevel(),
             self.patient["ma_benh_nhan"],
             self.ma_bac_si,
             self.patient["ho_ten"],
@@ -372,7 +486,529 @@ class PatientHistoryDialog(tk.Toplevel):
             return
         self._refresh()
         PhieuKhamDetailDialog(
-            self,
+            self.winfo_toplevel(),
+            dialog.result,
+            vai_tro="doctor",
+            ma_nguoi_xem=self.ma_bac_si,
+            on_changed=self._refresh,
+        )
+
+
+class DoctorPatientSearchView(ttk.Frame):
+
+    def __init__(self, parent: tk.Misc, doctor: BacSiDTO) -> None:
+        super().__init__(parent)
+        self.doctor = doctor
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.search_frame = ttk.Frame(self, padding=12)
+        self.search_frame.grid(row=0, column=0, sticky="nsew")
+        self.search_frame.columnconfigure(0, weight=1)
+        self.search_frame.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            self.search_frame,
+            text="Tra cứu bệnh nhân",
+            font=("TkDefaultFont", 16, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+
+        filters = ttk.LabelFrame(self.search_frame, text="Tìm kiếm và lọc", padding=8)
+        filters.grid(row=1, column=0, sticky="ew", pady=8)
+        filters.columnconfigure(1, weight=1)
+
+        row_pad = 6
+
+        ttk.Label(filters, text="Mã / Họ tên / Số điện thoại").grid(
+            row=0, column=0, sticky="w", pady=row_pad
+        )
+        self.keyword = ttk.Entry(filters)
+        self.keyword.grid(row=0, column=1, sticky="ew", padx=6, pady=row_pad)
+        self.keyword.bind("<Return>", self._search_event)
+
+        ttk.Label(filters, text="Ngày sinh").grid(
+            row=1, column=0, sticky="w", pady=row_pad
+        )
+
+        birth_frame = ttk.Frame(filters)
+        birth_frame.grid(row=1, column=1, sticky="w", padx=6, pady=(4, 0))
+
+        self.birth_date = ttk.Entry(birth_frame, width=12)
+        self.birth_date.pack(side="left")
+
+        if HAS_CALENDAR:
+            ttk.Button(
+                birth_frame, text="📅", width=3, command=self._open_birth_calendar
+            ).pack(side="left", padx=(2, 0))
+
+        ttk.Label(filters, text="Giới tính").grid(
+            row=2, column=0, sticky="w", pady=row_pad
+        )
+        self.gender_map = {"": "", "Nam": "NAM", "Nữ": "NU", "Khác": "KHAC"}
+        self.gender = ttk.Combobox(
+            filters, state="readonly", width=12, values=list(self.gender_map.keys())
+        )
+        self.gender.set("")
+        self.gender.grid(row=2, column=1, sticky="w", padx=6, pady=row_pad)
+
+        ttk.Label(filters, text="Địa chỉ").grid(
+            row=3, column=0, sticky="w", pady=row_pad
+        )
+        self.address = ttk.Entry(filters)
+        self.address.grid(row=3, column=1, sticky="ew", padx=6, pady=row_pad)
+
+        bottom_frame = ttk.Frame(filters)
+        bottom_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 2))
+
+        ttk.Label(
+            bottom_frame,
+            text="Ngày sinh dùng định dạng dd/mm/yyyy; để trống tiêu chí không cần lọc.",
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        ).pack(side="left", pady=4)
+
+        ttk.Button(
+            bottom_frame, text="Tìm", command=self._search, style="Primary.TButton"
+        ).pack(side="right")
+
+        ttk.Button(
+            bottom_frame,
+            text="Xóa lọc",
+            command=self._clear_filters,
+            style="Secondary.TButton",
+        ).pack(side="right", padx=(0, 8))
+
+        table_frame = ttk.Frame(self.search_frame)
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+
+        columns = ("ma_bn", "ho_ten", "dien_thoai", "ngay_sinh", "gioi_tinh", "dia_chi")
+        self.table = tao_bang(
+            table_frame,
+            columns,
+            {
+                "ma_bn": "Mã bệnh nhân",
+                "ho_ten": "Họ tên",
+                "dien_thoai": "Số điện thoại",
+                "ngay_sinh": "Ngày sinh",
+                "gioi_tinh": "Giới tính",
+                "dia_chi": "Địa chỉ",
+            },
+            {
+                "ma_bn": 100,
+                "ho_ten": 150,
+                "dien_thoai": 110,
+                "ngay_sinh": 90,
+                "gioi_tinh": 80,
+                "dia_chi": 150,
+            },
+        )
+
+        self.table.column("ma_bn", anchor="center")
+        self.table.column("ho_ten", anchor="w")
+        self.table.column("dien_thoai", anchor="center")
+        self.table.column("ngay_sinh", anchor="center")
+        self.table.column("gioi_tinh", anchor="center")
+        self.table.column("dia_chi", anchor="w")
+
+        self.table.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=self.table.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.bind("<Double-1>", self._open_selected)
+
+        actions = ttk.Frame(self.search_frame)
+        actions.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            actions,
+            text="Xem hồ sơ bệnh án",
+            command=self._open_selected,
+            style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(actions, text="Tải lại", command=self._search).pack(
+            side="left", padx=8
+        )
+
+        self._clear_filters()
+
+    def _clear_filters(self) -> None:
+        self.keyword.delete(0, "end")
+        self.birth_date.delete(0, "end")
+        self.gender.set("")
+        self.address.delete(0, "end")
+        self._search()
+
+    def _search_event(self, _event: tk.Event) -> None:
+        self._search()
+
+    def _search(self) -> None:
+        try:
+            birth_text = self.birth_date.get().strip()
+            birth_date = (
+                datetime.strptime(birth_text, "%d/%m/%Y").date() if birth_text else None
+            )
+
+            selected_label = self.gender.get()
+            db_gender = self.gender_map.get(selected_label)
+
+            patients = tim_kiem_benh_nhan(
+                self.keyword.get(),
+                ngay_sinh=birth_date,
+                gioi_tinh=db_gender,
+                dia_chi=self.address.get(),
+            )
+        except ValueError:
+            hien_loi(
+                self,
+                AppError(
+                    "DU_LIEU_KHONG_HOP_LE",
+                    "Ngày sinh phải theo định dạng dd/mm/yyyy.",
+                    "ngay_sinh",
+                ),
+            )
+            return
+        except Exception as error:
+            hien_loi(self, error)
+            return
+
+        for item in self.table.get_children():
+            self.table.delete(item)
+        for patient in patients:
+            ngay_sinh_str = (
+                patient["ngay_sinh"].strftime("%d/%m/%Y")
+                if patient.get("ngay_sinh")
+                else "—"
+            )
+
+            raw_g = (patient.get("gioi_tinh") or "").upper()
+            hien_thi_gioi_tinh = {"NAM": "Nam", "NU": "Nữ", "KHAC": "Khác"}.get(
+                raw_g, raw_g or "—"
+            )
+
+            self.table.insert(
+                "",
+                "end",
+                iid=str(patient["ma_benh_nhan"]),
+                values=(
+                    patient["ma_benh_nhan"],
+                    patient["ho_ten"],
+                    patient["so_dien_thoai"] or "—",
+                    ngay_sinh_str,
+                    hien_thi_gioi_tinh,
+                    patient["dia_chi"] or "—",
+                ),
+            )
+
+    def _open_selected(self, _event: tk.Event | None = None) -> None:
+        selection = self.table.selection()
+        if not selection:
+            messagebox.showinfo("Hồ sơ bệnh án", "Hãy chọn một bệnh nhân.", parent=self)
+            return
+        patient_id = selection[0]
+        values = self.table.item(selection[0], "values")
+        patient = {
+            "ma_benh_nhan": patient_id,
+            "ho_ten": values[1],
+            "so_dien_thoai": values[2],
+            "ngay_sinh": values[3],
+            "gioi_tinh": values[4],
+            "dia_chi": values[5],
+        }
+
+        self.search_frame.grid_remove()
+
+        if hasattr(self, "history_frame") and self.history_frame.winfo_exists():
+            self.history_frame.destroy()
+
+        self.history_frame = PatientHistoryViewEmbedded(
+            self, patient, self.doctor["ma_bac_si"], self._show_search_view
+        )
+        self.history_frame.grid(row=0, column=0, sticky="nsew")
+
+    def _show_search_view(self) -> None:
+        if hasattr(self, "history_frame") and self.history_frame.winfo_exists():
+            self.history_frame.destroy()
+        self.search_frame.grid()
+
+    def _open_birth_calendar(self):
+        """Hàm mở popup cuốn lịch siêu cấp ổn định cho ngày sinh"""
+        try:
+            from tkcalendar import Calendar
+        except ImportError:
+            return
+
+        top = tk.Toplevel(self)
+        top.title("Chọn ngày sinh")
+        top.geometry("+%d+%d" % (self.winfo_rootx() + 150, self.winfo_rooty() + 150))
+        top.transient(self.winfo_toplevel())
+        top.grab_set()
+
+        cal = Calendar(top, selectmode="day", date_pattern="dd/mm/yyyy")
+        cal.pack(padx=10, pady=10)
+
+        current_date = self.birth_date.get().strip()
+        if current_date:
+            try:
+                dt = datetime.strptime(current_date, "%d/%m/%Y").date()
+                cal.selection_set(dt)
+            except ValueError:
+                pass
+
+        def on_date_selected(e):
+            self.birth_date.delete(0, "end")
+            self.birth_date.insert(0, cal.get_date())
+            top.destroy()
+            self._search()
+
+        cal.bind("<<CalendarSelected>>", on_date_selected)
+
+
+class PatientHistoryViewEmbedded(ttk.Frame):
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        patient: BenhNhanDTO,
+        ma_bac_si: Identifier,
+        on_back: Callable[[], None],
+    ) -> None:
+        super().__init__(parent, padding=12)
+        self.patient = patient
+        self.ma_bac_si = ma_bac_si
+        self.on_back = on_back
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        top_frame = ttk.Frame(self)
+        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        top_frame.columnconfigure(1, weight=1)
+
+        ttk.Button(
+            top_frame,
+            text="← Quay lại danh sách",
+            command=self.on_back,
+            style="Secondary.TButton",
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Label(
+            top_frame,
+            text="HỒ SƠ BỆNH ÁN",
+            font=("TkDefaultFont", 18, "bold"),
+            anchor="center",
+        ).grid(row=0, column=1, sticky="ew")
+
+        self.lbl_ngay_lap = ttk.Label(top_frame, text="Ngày lập: —", foreground="gray")
+        self.lbl_ngay_lap.grid(row=0, column=2, sticky="e")
+
+        info_frame = ttk.Frame(self)
+        info_frame.grid(row=1, column=0, sticky="ew", pady=(0, 15))
+        info_frame.columnconfigure(0, weight=1)
+        info_frame.columnconfigure(1, weight=2)
+
+        patient_info_box = ttk.LabelFrame(
+            info_frame, text="Thông tin bệnh nhân", padding=8
+        )
+        patient_info_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        ttk.Label(
+            patient_info_box,
+            text=f"{patient['ho_ten']} (Mã bệnh nhân: {patient['ma_benh_nhan']})",
+            font=("TkDefaultFont", 11, "bold"),
+            foreground="#1677A5",
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Ngày sinh: {patient.get('ngay_sinh') or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Giới tính: {patient.get('gioi_tinh') or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Điện thoại: {patient.get('so_dien_thoai') or '—'}"
+        ).pack(anchor="w", pady=2)
+        ttk.Label(
+            patient_info_box, text=f"Địa chỉ: {patient.get('dia_chi') or '—'}"
+        ).pack(anchor="w", pady=2)
+
+        history_box = ttk.LabelFrame(info_frame, text="Tiền sử bệnh", padding=6)
+        history_box.grid(row=0, column=1, sticky="nsew")
+        history_box.rowconfigure(0, weight=1)
+        history_box.columnconfigure(0, weight=1)
+
+        self.medical_history = tk.Text(
+            history_box,
+            height=4,
+            wrap="word",
+            font=("TkDefaultFont", 10),
+            relief="flat",
+            highlightthickness=0,
+            background="#FFFFFF",
+        )
+        self.medical_history.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+
+        history_scroll = ttk.Scrollbar(
+            history_box, orient="vertical", command=self.medical_history.yview
+        )
+        history_scroll.grid(row=0, column=1, sticky="ns")
+        self.medical_history.configure(yscrollcommand=history_scroll.set)
+        self.medical_history.configure(state="disabled")  
+
+        table_frame = ttk.Frame(self)
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = (
+            "ma_phieu",
+            "ngay_gio",
+            "bac_si",
+            "khoa",
+            "chan_doan",
+            "trang_thai",
+            "tong",
+        )
+        self.table = tao_bang(
+            table_frame,
+            columns,
+            {
+                "ma_phieu": "Mã phiếu",
+                "ngay_gio": "Ngày giờ khám",
+                "bac_si": "Bác sĩ",
+                "khoa": "Khoa",
+                "chan_doan": "Chẩn đoán",
+                "trang_thai": "Trạng thái",
+                "tong": "Tổng chi phí",
+            },
+            {
+                "ma_phieu": 80,
+                "ngay_gio": 140,
+                "bac_si": 150,
+                "khoa": 110,
+                "chan_doan": 180,
+                "trang_thai": 110,
+                "tong": 120,
+            },
+        )
+
+        self.table.column("ma_phieu", anchor="center")
+        self.table.column("ngay_gio", anchor="center")
+        self.table.column("bac_si", anchor="center")
+        self.table.column("khoa", anchor="center")
+        self.table.column("chan_doan", anchor="w")
+        self.table.column("trang_thai", anchor="center")
+        self.table.column("tong", anchor="e")
+
+        self.table.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=self.table.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.bind("<Double-1>", self._open_selected)
+
+        actions = ttk.Frame(self, padding=(0, 12, 0, 0))
+        actions.grid(row=3, column=0, sticky="ew")
+        ttk.Button(
+            actions, text="Xem chi tiết phiếu", command=self._open_selected
+        ).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Tạo phiếu khám mới",
+            command=self._create_visit,
+            style="Success.TButton",
+        ).pack(side="left", padx=8)
+
+        self._refresh()
+
+    def _refresh(self) -> None:
+        try:
+            visits = lay_lich_su_benh_nhan(self.patient["ma_benh_nhan"])
+            ho_so = lay_ho_so_benh_an(self.patient["ma_benh_nhan"])
+        except Exception as error:
+            hien_loi(self, error)
+            return
+
+        self.medical_history.configure(state="normal")
+        self.medical_history.delete("1.0", "end")
+
+        if ho_so:
+            tien_su = ho_so.get("tien_su_benh") or "Chưa ghi nhận."
+            ngay_lap = ho_so.get("ngay_lap")
+            ngay_lap_str = ngay_lap.strftime("%d/%m/%Y") if ngay_lap else "—"
+            self.lbl_ngay_lap.configure(text=f"Ngày lập: {ngay_lap_str}")
+        else:
+            tien_su = "Chưa ghi nhận."
+            self.lbl_ngay_lap.configure(text="Ngày lập: —")
+
+        self.medical_history.insert("1.0", tien_su)
+        self.medical_history.configure(state="disabled")
+
+        for item in self.table.get_children():
+            self.table.delete(item)
+
+        for visit in visits:
+            raw_status = visit.get("trang_thai", "HOAN_THANH")
+            text_status = "Đang khám" if raw_status == "DANG_KHAM" else "Hoàn thành"
+
+            self.table.insert(
+                "",
+                "end",
+                iid=str(visit["ma_phieu"]),
+                values=(
+                    visit["ma_phieu"],
+                    visit["ngay_gio_kham"].strftime("%d/%m/%Y %H:%M"),
+                    visit["ten_bac_si"],
+                    visit["ten_khoa"],
+                    visit["chan_doan"] or "—",
+                    text_status,
+                    dinh_dang_tien(visit["tong_chi_phi"]),
+                ),
+            )
+
+    def _open_selected(self, _event: tk.Event | None = None) -> None:
+        selection = self.table.selection()
+        if not selection:
+            messagebox.showinfo("Phiếu khám", "Hãy chọn một phiếu khám.", parent=self)
+            return
+        PhieuKhamDetailDialog(
+            self.winfo_toplevel(),
+            selection[0],
+            vai_tro="doctor",
+            ma_nguoi_xem=self.ma_bac_si,
+            on_changed=self._refresh,
+        )
+
+    def _create_visit(self) -> None:
+        try:
+            existing_visit = tim_phieu_dang_kham(
+                self.patient["ma_benh_nhan"], self.ma_bac_si
+            )
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        if existing_visit is not None:
+            PhieuKhamDetailDialog(
+                self.winfo_toplevel(),
+                existing_visit,
+                vai_tro="doctor",
+                ma_nguoi_xem=self.ma_bac_si,
+                on_changed=self._refresh,
+            )
+            return
+        dialog = TaoPhieuKhamDialog(
+            self.winfo_toplevel(),
+            self.patient["ma_benh_nhan"],
+            self.ma_bac_si,
+            self.patient["ho_ten"],
+        )
+        self.wait_window(dialog)
+        if dialog.result is None:
+            return
+        self._refresh()
+        PhieuKhamDetailDialog(
+            self.winfo_toplevel(),
             dialog.result,
             vai_tro="doctor",
             ma_nguoi_xem=self.ma_bac_si,
@@ -396,7 +1032,10 @@ class DoctorReportView(ttk.Frame):
         controls.grid(row=1, column=0, sticky="ew", pady=8)
         ttk.Label(controls, text="Tháng").grid(row=0, column=0, sticky="w")
         self.month = ttk.Combobox(
-            controls, state="readonly", width=5, values=[str(month) for month in range(1, 13)]
+            controls,
+            state="readonly",
+            width=5,
+            values=[str(month) for month in range(1, 13)],
         )
         self.month.set(str(today.month))
         self.month.grid(row=0, column=1, padx=5)
@@ -473,10 +1112,17 @@ class DoctorReportView(ttk.Frame):
             ("Số lượt khám (thang riêng)", "Tổng giá trị ghi nhận (thang riêng)")
         ):
             chart = ttk.LabelFrame(chart_frame, text=title)
-            chart.grid(row=0, column=column, sticky="nsew", padx=(0, 5) if column == 0 else (5, 0))
+            chart.grid(
+                row=0,
+                column=column,
+                sticky="nsew",
+                padx=(0, 5) if column == 0 else (5, 0),
+            )
             chart.rowconfigure(0, weight=1)
             chart.columnconfigure(0, weight=1)
-            canvas = tk.Canvas(chart, height=200, background="white", highlightthickness=0)
+            canvas = tk.Canvas(
+                chart, height=200, background="white", highlightthickness=0
+            )
             canvas.grid(row=0, column=0, sticky="nsew")
             canvas.bind(
                 "<Configure>",
@@ -625,7 +1271,7 @@ class DoctorReportView(ttk.Frame):
         )
         if not path_text:
             return
-        filters = [f'Tháng {self.month.get()}/{self.year.get()}']
+        filters = [f"Tháng {self.month.get()}/{self.year.get()}"]
         try:
             xuat_bang_pdf(
                 Path(path_text),
@@ -659,21 +1305,14 @@ class DoctorReportView(ttk.Frame):
                 ],
                 self.rows,
                 {
-                    "so_luot_kham": sum(
-                        int(row["so_luot_kham"]) for row in self.rows
-                    ),
-                    "so_benh_nhan": sum(
-                        int(row["so_benh_nhan"]) for row in self.rows
-                    ),
+                    "so_luot_kham": sum(int(row["so_luot_kham"]) for row in self.rows),
+                    "so_benh_nhan": sum(int(row["so_benh_nhan"]) for row in self.rows),
                     "gia_kham": sum(
                         (Decimal(str(row["gia_kham"] or 0)) for row in self.rows),
                         Decimal("0"),
                     ),
                     "gia_xet_nghiem": sum(
-                        (
-                            Decimal(str(row["gia_xet_nghiem"] or 0))
-                            for row in self.rows
-                        ),
+                        (Decimal(str(row["gia_xet_nghiem"] or 0)) for row in self.rows),
                         Decimal("0"),
                     ),
                     "gia_thuoc": sum(
@@ -681,10 +1320,7 @@ class DoctorReportView(ttk.Frame):
                         Decimal("0"),
                     ),
                     "tong_gia_tri": sum(
-                        (
-                            Decimal(str(row["tong_gia_tri"] or 0))
-                            for row in self.rows
-                        ),
+                        (Decimal(str(row["tong_gia_tri"] or 0)) for row in self.rows),
                         Decimal("0"),
                     ),
                 },

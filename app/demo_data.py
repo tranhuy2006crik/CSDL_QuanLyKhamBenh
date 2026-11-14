@@ -15,7 +15,6 @@ from app.contracts import (
 )
 from app.errors import AppError
 
-
 DEMO_PATIENT_ID = 900001
 DEMO_DOCTOR_ID = 900101
 DEMO_SECOND_PATIENT_ID = 900002
@@ -331,20 +330,21 @@ class DemoClinicData:
                 ):
                     continue
             results.append(patient)
-        return deepcopy(sorted(results, key=lambda row: (row["ho_ten"], row["ma_benh_nhan"])))
+        return deepcopy(
+            sorted(results, key=lambda row: (row["ho_ten"], row["ma_benh_nhan"]))
+        )
 
     def history(self, patient_id: int) -> list[LichSuKhamRow]:
         rows = []
         for visit in self.visits.values():
-            if (
-                visit["ma_benh_nhan"] != patient_id
-                or visit["trang_thai"] != "HOAN_THANH"
-            ):
+            if visit["ma_benh_nhan"] != patient_id:
                 continue
             self._refresh_visit_totals(visit)
             doctor = self.get_doctor(visit["ma_bac_si"])
             department = next(
-                item for item in self.departments if item["ma_khoa"] == doctor["ma_khoa"]
+                item
+                for item in self.departments
+                if item["ma_khoa"] == doctor["ma_khoa"]
             )
             rows.append(
                 {
@@ -371,11 +371,7 @@ class DemoClinicData:
 
     def weekly_schedule(self, department_id: int) -> list[dict[str, Any]]:
         return deepcopy(
-            [
-                row
-                for row in self.schedule
-                if row["ma_khoa"] == department_id
-            ]
+            [row for row in self.schedule if row["ma_khoa"] == department_id]
         )
 
     def report(
@@ -391,9 +387,11 @@ class DemoClinicData:
         for doctor in self.doctors:
             if department_id is not None and doctor["ma_khoa"] != department_id:
                 continue
-            if needle and needle not in str(doctor["ma_bac_si"]).casefold() and needle not in doctor[
-                "ten_bac_si"
-            ].casefold():
+            if (
+                needle
+                and needle not in str(doctor["ma_bac_si"]).casefold()
+                and needle not in doctor["ten_bac_si"].casefold()
+            ):
                 continue
             visits = [
                 visit
@@ -409,7 +407,9 @@ class DemoClinicData:
                 Decimal("0"),
             )
             department = next(
-                item for item in self.departments if item["ma_khoa"] == doctor["ma_khoa"]
+                item
+                for item in self.departments
+                if item["ma_khoa"] == doctor["ma_khoa"]
             )
             result.append(
                 {
@@ -453,19 +453,17 @@ class DemoClinicData:
         department = next(
             item for item in self.departments if item["ma_khoa"] == doctor["ma_khoa"]
         )
-        pending_labs = sum(
-            not row["ket_qua"] for row in visit["ds_xet_nghiem"]
-        )
+        pending_labs = sum(not row["ket_qua"] for row in visit["ds_xet_nghiem"])
         labs = len(visit["ds_xet_nghiem"])
         order = self._public_order(visit)
         return deepcopy(
             {
                 "thong_tin": {
                     "ma_phieu": visit_id,
-                "trang_thai": visit["trang_thai"],
+                    "trang_thai": visit["trang_thai"],
                     "ma_benh_nhan": visit["ma_benh_nhan"],
                     "ho_ten_benh_nhan": patient["ho_ten"],
-                "ngay_sinh": patient["ngay_sinh"],
+                    "ngay_sinh": patient["ngay_sinh"],
                     "so_dien_thoai": patient["so_dien_thoai"],
                     "ma_bac_si": visit["ma_bac_si"],
                     "ten_bac_si": doctor["ten_bac_si"],
@@ -477,9 +475,7 @@ class DemoClinicData:
                     "tinh_trang_xet_nghiem": (
                         CHUA_CHI_DINH
                         if labs == 0
-                        else CON_CHO
-                        if pending_labs
-                        else DA_DU_KET_QUA
+                        else CON_CHO if pending_labs else DA_DU_KET_QUA
                     ),
                     "gia_kham": visit["gia_kham"],
                     "gia_xet_nghiem": visit["gia_xet_nghiem"],
@@ -493,9 +489,7 @@ class DemoClinicData:
             }
         )
 
-    def find_in_progress_visit(
-        self, patient_id: int, doctor_id: int
-    ) -> int | None:
+    def find_in_progress_visit(self, patient_id: int, doctor_id: int) -> int | None:
         return next(
             (
                 visit["ma_phieu"]
@@ -512,12 +506,15 @@ class DemoClinicData:
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
         if visit["ma_bac_si"] != doctor_id:
-            raise AppError("KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu.")
+            raise AppError(
+                "KHONG_DU_QUYEN", "Chỉ bác sĩ phụ trách mới được chốt phiếu."
+            )
         if visit["trang_thai"] != "DANG_KHAM":
             raise AppError("PHIEU_DA_HOAN_THANH", "Phiếu khám đã hoàn thành.")
         if not (visit["chan_doan"] or "").strip():
             raise AppError(
-                "CHUA_DU_DIEU_KIEN_HOAN_THANH", "Cần nhập chẩn đoán trước khi chốt phiếu."
+                "CHUA_DU_DIEU_KIEN_HOAN_THANH",
+                "Cần nhập chẩn đoán trước khi chốt phiếu.",
             )
         if any(not (lab["ket_qua"] or "").strip() for lab in visit["ds_xet_nghiem"]):
             raise AppError(
@@ -620,7 +617,9 @@ class DemoClinicData:
                 "Không thể thay đổi xét nghiệm của phiếu đã hoàn thành.",
             )
         if sequence is None:
-            sequence = max((row["stt"] for row in visit["ds_xet_nghiem"]), default=0) + 1
+            sequence = (
+                max((row["stt"] for row in visit["ds_xet_nghiem"]), default=0) + 1
+            )
             visit["ds_xet_nghiem"].append(
                 {
                     "ma_phieu": visit_id,
@@ -678,12 +677,9 @@ class DemoClinicData:
         if not create_new and current is None:
             raise AppError("KHONG_TIM_THAY", "Phiếu khám demo chưa có đơn thuốc.")
         if current is not None and current["ma_don"] != order_id:
-            raise AppError(
-                "KHONG_TIM_THAY", "Mã đơn không thuộc phiếu khám demo."
-            )
+            raise AppError("KHONG_TIM_THAY", "Mã đơn không thuộc phiếu khám demo.")
         if create_new and any(
-            other["don_thuoc"] is not None
-            and other["don_thuoc"]["ma_don"] == order_id
+            other["don_thuoc"] is not None and other["don_thuoc"]["ma_don"] == order_id
             for other in self.visits.values()
         ):
             raise AppError("TRUNG_MA", f"Mã đơn thuốc {order_id} đã được dùng.")
@@ -709,10 +705,7 @@ class DemoClinicData:
                     "KHONG_DU_TON",
                     f"Thuốc {medicine['ten_thuoc']} không đủ tồn demo.",
                 )
-            if (
-                delta < 0
-                and medicine["so_luong_co_san"] - delta > 2_147_483_647
-            ):
+            if delta < 0 and medicine["so_luong_co_san"] - delta > 2_147_483_647:
                 raise AppError(
                     "DU_LIEU_KHONG_HOP_LE",
                     f"Hoàn tồn thuốc demo mã {medicine_id} vượt phạm vi INT.",

@@ -2,9 +2,9 @@ import logging
 from decimal import Decimal
 import tkinter as tk
 from tkinter import messagebox, ttk
+from typing import Callable
 
 from app.errors import AppError
-
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,9 @@ def dinh_dang_tien(value: object) -> str:
     return f"{formatted} VNĐ"
 
 
-def hien_loi(parent: ttk.Widget, error: Exception, title: str = "Không thể hoàn thành") -> None:
+def hien_loi(
+    parent: ttk.Widget, error: Exception, title: str = "Không thể hoàn thành"
+) -> None:
     if isinstance(error, AppError):
         messagebox.showerror(title, error.message, parent=parent)
         return
@@ -40,13 +42,19 @@ def tao_bang(
     return table
 
 
-def xac_nhan_thay_doi_chua_luu(
-    parent: tk.Misc, luu_thay_doi
-) -> bool:
+def xac_nhan_thay_doi_chua_luu(parent: tk.Misc, on_save: Callable[[], bool]) -> bool:
     dialog = tk.Toplevel(parent)
     dialog.title("Thay đổi chưa được lưu")
-    dialog.transient(parent)
+    dialog.geometry("360x120")
     dialog.resizable(False, False)
+
+    dialog.update_idletasks()
+    x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+    y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+    dialog.geometry(f"+{x}+{y}")
+
+    dialog.transient(parent)
+    dialog.grab_set()
     accepted = {"close": False}
     ttk.Label(
         dialog,
@@ -61,15 +69,15 @@ def xac_nhan_thay_doi_chua_luu(
         dialog.destroy()
 
     def save() -> None:
-        if luu_thay_doi():
+        if on_save():
             finish(True)
 
-    ttk.Button(
-        buttons, text="Lưu thay đổi", command=save
-    ).pack(side="left", padx=(0, 6))
-    ttk.Button(
-        buttons, text="Bỏ thay đổi", command=lambda: finish(True)
-    ).pack(side="left", padx=6)
+    ttk.Button(buttons, text="Lưu thay đổi", command=save).pack(
+        side="left", padx=(0, 6)
+    )
+    ttk.Button(buttons, text="Bỏ thay đổi", command=lambda: finish(True)).pack(
+        side="left", padx=6
+    )
     ttk.Button(
         buttons,
         text="Tiếp tục chỉnh sửa",

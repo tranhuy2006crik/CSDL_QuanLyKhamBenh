@@ -113,7 +113,6 @@ LEFT JOIN (
     GROUP BY d.MaPhieuKhamBenh
 ) AS d ON d.MaPhieuKhamBenh = p.MaPhieuKhamBenh
 WHERE h.MaBenhNhan = %(ma_benh_nhan)s
-  AND p.TrangThaiPhieuKham = 'HOAN_THANH'
 ORDER BY p.NgayGioKham DESC, p.MaPhieuKhamBenh DESC
 """
 

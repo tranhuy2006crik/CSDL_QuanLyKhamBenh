@@ -72,7 +72,7 @@ WHERE MaPhieuKhamBenh = %s
 """
 
 Q_REPORT_VISIT = """
-SELECT bn.MaBenhNhan, bn.HoTen, bn.NgaySinh, bn.SoDienThoai,
+SELECT bn.MaBenhNhan, bn.HoTen, bn.NgaySinh, bn.SoDienThoai, bn.DiaChi,
        pk.MaPhieuKhamBenh, pk.NgayGioKham, bs.HoTen AS BacSiKham,
        pk.ChanDoan, pk.TrieuChung
 FROM PhieuKhamBenh pk

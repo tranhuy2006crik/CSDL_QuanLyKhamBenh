@@ -5,7 +5,7 @@ from typing import Any
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -20,10 +20,13 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
+    Image,
 )
 
-
 FONT_DIRECTORY = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+if not FONT_DIRECTORY.exists():
+    FONT_DIRECTORY = Path(__file__).resolve().parent / "assets" / "fonts"
+
 FONT_REGULAR_PATH = FONT_DIRECTORY / "NotoSans-Regular.ttf"
 FONT_BOLD_PATH = FONT_DIRECTORY / "NotoSans-Bold.ttf"
 SUPPORTED_COLUMN_KINDS = {"text", "int", "money", "date", "datetime"}
@@ -106,6 +109,97 @@ def _format_summary_value(value: Any) -> str:
     return _format_value(value, "text")
 
 
+def _build_pdf_header() -> Table:
+    styles = getSampleStyleSheet()
+    clinic_info_style = ParagraphStyle(
+        "ClinicInfo",
+        parent=styles["Normal"],
+        leading=16,
+    )
+
+    clinic_text = """
+    <font name="NotoSans-Bold" size="15" color="#183B56">BỆNH VIỆN TƯ NHÓM 10</font><br/>
+    <font name="NotoSans" size="10" color="#333333">
+    <b>Địa chỉ:</b> Km10 Đ. Nguyễn Trãi, P. Mỗ Lao, Hà Đông, Hà Nội<br/>
+    <b>Điện thoại:</b> (028) 1234 5678 &nbsp;&nbsp;&nbsp;&nbsp; <b>Email:</b> nhom10@gmail.com
+    </font>
+    """
+
+    logo_dir = Path(__file__).resolve().parents[1] / "assets" / "logo"
+    if not logo_dir.exists():
+        logo_dir = Path(__file__).resolve().parent / "assets" / "logo"
+
+    logo_path = None
+    if logo_dir.exists() and logo_dir.is_dir():
+        image_extensions = ("*.png", "*.jpg", "*.jpeg", "*.JPG", "*.PNG")
+        for ext in image_extensions:
+            files = list(logo_dir.glob(ext))
+            if files:
+                logo_path = files[0]
+                break
+
+    if logo_path and logo_path.is_file():
+        logo_element = Image(str(logo_path), width=38 * mm, height=38 * mm)
+        logo_element.hAlign = "RIGHT"
+    else:
+        logo_element = Paragraph(
+            "<b>[LOGO BỆNH VIỆN]</b>",
+            ParagraphStyle(
+                "LogoText",
+                alignment=TA_RIGHT,
+                fontName="NotoSans-Bold",
+                fontSize=12,
+                textColor=colors.HexColor("#183B56"),
+            ),
+        )
+
+    header_table = Table(
+        [[Paragraph(clinic_text, clinic_info_style), logo_element]],
+        colWidths=["75%", "25%"],
+    )
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+                ("LINEBELOW", (0, 0), (-1, -1), 1.5, colors.HexColor("#183B56")),
+            ]
+        )
+    )
+    return header_table
+
+
+def _build_pdf_signature() -> Table:
+    styles = getSampleStyleSheet()
+    sig_style = ParagraphStyle(
+        "Signature", fontName="NotoSans-Bold", fontSize=11, alignment=TA_CENTER
+    )
+    date_style = ParagraphStyle(
+        "SigDate", fontName="NotoSans", fontSize=10, alignment=TA_CENTER, spaceAfter=25
+    )
+
+    sig_table = Table(
+        [
+            [
+                "",
+                Paragraph(
+                    f"Hà Nội, ngày {datetime.now().day} tháng {datetime.now().month} năm {datetime.now().year}",
+                    date_style,
+                ),
+            ],
+            [
+                "",
+                Paragraph(
+                    "Bác Sĩ<br/><font size='9'>(Ký, ghi rõ họ tên)</font>",
+                    sig_style,
+                ),
+            ],
+        ],
+        colWidths=["55%", "45%"],
+    )
+    return sig_table
+
+
 def xuat_bang_pdf(
     duong_dan: Path,
     tieu_de: str,
@@ -115,7 +209,6 @@ def xuat_bang_pdf(
     tong_ket: dict[str, Any],
     bieu_do: list[dict[str, Any]] | None = None,
 ) -> Path:
-    """Export the exact report rows supplied by a screen/service to a PDF."""
     if not isinstance(duong_dan, Path):
         raise TypeError("duong_dan phải là pathlib.Path.")
     if not tieu_de.strip():
@@ -195,10 +288,7 @@ def xuat_bang_pdf(
     )
 
     table_data: list[list[Paragraph]] = [
-        [
-            Paragraph(escape(column["label"]), header_style)
-            for column in cot
-        ]
+        [Paragraph(escape(column["label"]), header_style) for column in cot]
     ]
     for row in rows:
         cells: list[Paragraph] = []
@@ -348,9 +438,7 @@ def xuat_bang_pdf(
     return duong_dan
 
 
-def xuat_bao_cao_phieu_kham_pdf(
-    duong_dan: Path, report: dict[str, Any]
-) -> Path:
+def xuat_bao_cao_phieu_kham_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
     if not isinstance(duong_dan, Path):
         raise TypeError("duong_dan phải là pathlib.Path.")
     for key in ("thong_tin", "ds_xet_nghiem", "loi_dan", "ds_thuoc", "tong_chi_phi"):
@@ -370,28 +458,40 @@ def xuat_bao_cao_phieu_kham_pdf(
         author="Hệ thống quản lý khám bệnh ngoại trú",
     )
     styles = getSampleStyleSheet()
-    heading = ParagraphStyle(
-        "VisitReportHeading",
+
+    heading1 = ParagraphStyle(
+        "VisitReportHeading1",
+        parent=styles["Heading1"],
+        fontName="NotoSans-Bold",
+        fontSize=14,
+        leading=18,
+        textColor=colors.HexColor("#24527A"),
+        spaceBefore=5 * mm,
+        spaceAfter=3 * mm,
+    )
+    heading2 = ParagraphStyle(
+        "VisitReportHeading2",
         parent=styles["Heading2"],
         fontName="NotoSans-Bold",
-        fontSize=11,
-        leading=14,
-        textColor=colors.HexColor("#24527A"),
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor("#183B56"),
         spaceBefore=3 * mm,
         spaceAfter=2 * mm,
+        leftIndent=5 * mm,
     )
     body = ParagraphStyle(
         "VisitReportBody",
         parent=styles["BodyText"],
         fontName="NotoSans",
-        fontSize=9,
-        leading=13,
+        fontSize=11,
+        leading=16,
         wordWrap="CJK",
     )
-    label = ParagraphStyle(
-        "VisitReportLabel",
+    body_indent = ParagraphStyle(
+        "VisitReportBodyIndent",
         parent=body,
-        fontName="NotoSans-Bold",
+        leftIndent=5 * mm,
     )
     title = ParagraphStyle(
         "VisitReportTitle",
@@ -405,7 +505,9 @@ def xuat_bao_cao_phieu_kham_pdf(
     )
 
     def p(value: Any, style: ParagraphStyle = body) -> Paragraph:
-        return Paragraph(escape("—" if value is None or value == "" else str(value)), style)
+        return Paragraph(
+            escape("—" if value is None or value == "" else str(value)), style
+        )
 
     def data_table(rows: list[list[Any]], widths: list[float] | None = None) -> Table:
         table = Table(rows, colWidths=widths, repeatRows=1, hAlign="LEFT")
@@ -414,13 +516,15 @@ def xuat_bao_cao_phieu_kham_pdf(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF4")),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183B56")),
-                    ("FONTNAME", (0, 0), (-1, -1), "NotoSans"),
+                    ("FONTNAME", (0, 0), (-1, -1), "NotoSans-Bold"),
+                    ("FONTNAME", (0, 1), (-1, -1), "NotoSans"),
                     ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#B8C5D1")),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
                     ("TOPPADDING", (0, 0), (-1, -1), 5),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
                 ]
             )
         )
@@ -428,96 +532,202 @@ def xuat_bao_cao_phieu_kham_pdf(
 
     info = report["thong_tin"]
     costs = report["tong_chi_phi"]
-    story: list[Any] = [
-        Paragraph("BÁO CÁO KẾT QUẢ KHÁM BỆNH", title),
-        Paragraph("Thông tin hành chính và ca khám", heading),
-        data_table(
-            [
-                [p("Mã bệnh nhân", label), p(info["ma_benh_nhan"]),
-                 p("Họ tên", label), p(info["ho_ten"])],
-                [p("Ngày sinh", label), p(_format_value(info["ngay_sinh"], "date")),
-                 p("Điện thoại", label), p(info["so_dien_thoai"])],
-                [p("Mã phiếu", label), p(info["ma_phieu"]),
-                 p("Ngày giờ khám", label), p(_format_value(info["ngay_gio_kham"], "datetime"))],
-                [p("Bác sĩ", label), p(info["bac_si"]), p("Trạng thái", label), p("HOÀN THÀNH")],
-            ],
-            [29 * mm, 52 * mm, 30 * mm, 67 * mm],
-        ),
-        Paragraph("Triệu chứng", heading),
-        p(info["trieu_chung"]),
-        Paragraph("Chẩn đoán", heading),
-        p(info["chan_doan"]),
-        Paragraph("Xét nghiệm và kết quả", heading),
+
+    info_table_data = [
+        [
+            Paragraph(
+                f"<b>Mã bệnh nhân:</b> {escape(str(info['ma_benh_nhan']))}", body_indent
+            ),
+            Paragraph(f"<b>Mã phiếu:</b> {escape(str(info['ma_phieu']))}", body_indent),
+        ],
+        [
+            Paragraph(f"<b>Họ tên:</b> {escape(str(info['ho_ten']))}", body_indent),
+            Paragraph(f"<b>Bác sĩ:</b> {escape(str(info['bac_si']))}", body_indent),
+        ],
+        [
+            Paragraph(
+                f"<b>Ngày sinh:</b> {escape(_format_value(info['ns_str'] if 'ns_str' in info else info['ngay_sinh'], 'date'))}",
+                body_indent,
+            ),
+            Paragraph(
+                f"<b>Ngày giờ khám:</b> {escape(_format_value(info['ngay_gio_kham'], 'datetime'))}",
+                body_indent,
+            ),
+        ],
+        [
+            Paragraph(
+                f"<b>Điện thoại:</b> {escape(str(info['so_dien_thoai'] or '—'))}",
+                body_indent,
+            ),
+            "",
+        ],
+        [
+            Paragraph(
+                f"<b>Địa chỉ:</b> {escape(str(info.get('dia_chi') or '—'))}",
+                body_indent,
+            ),
+            "",
+        ],
     ]
-    lab_rows = [[p("STT", label), p("Xét nghiệm", label), p("Kết quả", label),
-                 p("Thời điểm", label), p("Đơn giá", label)]]
+
+    info_table = Table(info_table_data, colWidths=["50%", "50%"])
+    info_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
+
+    story: list[Any] = [
+        _build_pdf_header(),
+        Spacer(1, 5 * mm),
+        Paragraph("PHIẾU KHÁM BỆNH", title),
+        Paragraph("I - Thông tin hành chính và ca khám", heading1),
+        info_table,
+        Paragraph("II - Quá trình khám bệnh", heading1),
+        Paragraph("1. Triệu chứng", heading2),
+        p(info["trieu_chung"], body_indent),
+        Paragraph("2. Chẩn đoán", heading2),
+        p(info["chan_doan"], body_indent),
+        Paragraph("3. Xét nghiệm", heading2),
+    ]
+
+    col_hdr_center = ParagraphStyle(
+        "ColHdrC", parent=body, fontName="NotoSans-Bold", alignment=TA_CENTER
+    )
+
+    cell_center = ParagraphStyle("CellC", parent=body, alignment=TA_CENTER)
+    cell_left = ParagraphStyle("CellL", parent=body, alignment=TA_LEFT)
+    cell_right = ParagraphStyle("CellR", parent=body, alignment=TA_RIGHT)
+
+    def cp(val: Any, align: str = "left") -> Paragraph:
+        s = (
+            cell_left
+            if align == "left"
+            else (cell_center if align == "center" else cell_right)
+        )
+        return Paragraph(escape("—" if val is None or val == "" else str(val)), s)
+
+    def chdr_c(val: str) -> Paragraph:
+        return Paragraph(escape(val), col_hdr_center)
+
+    lab_rows = [
+        [
+            chdr_c("STT"),
+            chdr_c("Xét nghiệm"),
+            chdr_c("Kết quả"),
+            chdr_c("Thời điểm"),
+            chdr_c("Đơn giá"),
+        ]
+    ]
     for row in report["ds_xet_nghiem"]:
         lab_rows.append(
             [
-                p(row["stt"]),
-                p(row["ten_xet_nghiem"]),
-                p(row["ket_qua"]),
-                p(_format_value(row["ngay_gio_thuc_hien"], "datetime")),
-                p(_format_money(row["don_gia_ap_dung"])),
+                cp(row["stt"], "center"),
+                cp(row["ten_xet_nghiem"], "left"),
+                cp(row["ket_qua"], "left"),
+                cp(_format_value(row["ngay_gio_thuc_hien"], "datetime"), "center"),
+                cp(_format_money(row["don_gia_ap_dung"]), "center"),
             ]
         )
-    story.append(
-        data_table(lab_rows, [12 * mm, 43 * mm, 57 * mm, 35 * mm, 31 * mm])
-        if len(lab_rows) > 1
-        else p("Không có chỉ định xét nghiệm.")
-    )
-    story.append(Paragraph("Đơn thuốc", heading))
+    if len(lab_rows) > 1:
+        story.append(
+            data_table(lab_rows, [12 * mm, 45 * mm, 55 * mm, 35 * mm, 31 * mm])
+        )
+    else:
+        story.append(p("Không có chỉ định xét nghiệm.", body_indent))
+
+    story.append(Paragraph("4. Đơn thuốc", heading2))
+
     for note in report["loi_dan"]:
         story.append(
-            p(
-                f'Lời dặn ({_format_value(note["ngay_lap"], "date")}): '
-                f'{note["loi_dan"] or "Không có"}'
+            Paragraph(
+                f'<b>Lời dặn:</b> {escape(note["loi_dan"] or "Không có")}',
+                body_indent,
             )
         )
     if not report["loi_dan"]:
-        story.append(p("Không có đơn thuốc."))
-    medicine_rows = [[p("Thuốc", label), p("SL", label), p("ĐVT", label),
-                      p("Cách dùng", label), p("Đơn giá", label), p("Thành tiền", label)]]
+        story.append(p("Không có đơn thuốc.", body_indent))
+
+    medicine_rows = [
+        [
+            chdr_c("Thuốc"),
+            chdr_c("SL"),
+            chdr_c("ĐVT"),
+            chdr_c("Cách dùng"),
+            chdr_c("Đơn giá"),
+            chdr_c("Thành tiền"),
+        ]
+    ]
     for row in report["ds_thuoc"]:
         medicine_rows.append(
             [
-                p(row["ten_thuoc"]),
-                p(row["so_luong_ke"]),
-                p(row["don_vi_tinh"]),
-                p(row["cach_dung"]),
-                p(_format_money(row["don_gia_ap_dung"])),
-                p(_format_money(row["thanh_tien"])),
+                cp(row["ten_thuoc"], "left"),
+                cp(row["so_luong_ke"], "center"),
+                cp(row["don_vi_tinh"], "center"),
+                cp(row["cach_dung"], "left"),
+                cp(_format_money(row["don_gia_ap_dung"]), "center"),
+                cp(_format_money(row["thanh_tien"]), "center"),
             ]
         )
-    story.append(
-        data_table(
-            medicine_rows,
-            [37 * mm, 10 * mm, 15 * mm, 44 * mm, 34 * mm, 38 * mm],
-        )
-        if len(medicine_rows) > 1
-        else p("Không có thuốc được kê.")
-    )
-    story.extend(
-        [
-            Paragraph("Tổng chi phí ghi nhận", heading),
+    if len(medicine_rows) > 1:
+        story.append(
             data_table(
-                [
-                    [p("Giá khám", label), p(_format_money(costs["gia_kham"])),
-                     p("Xét nghiệm", label), p(_format_money(costs["gia_xet_nghiem"]))],
-                    [p("Thuốc", label), p(_format_money(costs["gia_thuoc"])),
-                     p("Tổng chi phí", label), p(_format_money(costs["tong_chi_phi"]))],
-                ],
-                [35 * mm, 50 * mm, 35 * mm, 58 * mm],
-            ),
-        ]
+                medicine_rows, [40 * mm, 12 * mm, 15 * mm, 43 * mm, 29 * mm, 39 * mm]
+            )
+        )
+    else:
+        story.append(p("Không có thuốc được kê.", body_indent))
+
+    story.append(Paragraph("III - Chi phí", heading1))
+
+    gia_kham = costs.get("gia_kham", Decimal("0"))
+    gia_xet_nghiem = costs.get("gia_xet_nghiem", Decimal("0"))
+    gia_thuoc = costs.get("gia_thuoc", Decimal("0"))
+    tong_cong = costs["tong_chi_phi"]
+
+    bill_style = ParagraphStyle("BillStyle", parent=body, alignment=TA_RIGHT)
+
+    cost_table_data = [
+        [Paragraph("Giá khám:", body), Paragraph(_format_money(gia_kham), bill_style)],
+        [
+            Paragraph("Giá xét nghiệm:", body),
+            Paragraph(_format_money(gia_xet_nghiem), bill_style),
+        ],
+        [
+            Paragraph("Giá thuốc:", body),
+            Paragraph(_format_money(gia_thuoc), bill_style),
+        ],
+        [
+            Paragraph("<b>TỔNG CỘNG:</b>", body),
+            Paragraph(f"<b>{_format_money(tong_cong)}</b>", bill_style),
+        ],
+    ]
+    cost_table = Table(cost_table_data, colWidths=[130 * mm, 48 * mm], hAlign="RIGHT")
+    cost_table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("LINEABOVE", (0, -1), (-1, -1), 1, colors.black),
+            ]
+        )
     )
+
+    story.append(cost_table)
+
+    story.extend([Spacer(1, 15 * mm), _build_pdf_signature()])
 
     def draw_page_number(canvas: Canvas, _document: SimpleDocTemplate) -> None:
         canvas.saveState()
         canvas.setFont("NotoSans", 8)
-        canvas.drawRightString(
-            A4[0] - 16 * mm, 9 * mm, f"Trang {_document.page}"
-        )
+        canvas.drawRightString(A4[0] - 16 * mm, 9 * mm, f"Trang {_document.page}")
         canvas.restoreState()
 
     document.build(story, onFirstPage=draw_page_number, onLaterPages=draw_page_number)
