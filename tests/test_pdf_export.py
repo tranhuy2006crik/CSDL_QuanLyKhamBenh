@@ -5,6 +5,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.pdf_export import xuat_bang_pdf, xuat_bao_cao_phieu_kham_pdf
+from app.doctor_report_pdf import (
+    _build_horizontal_bar_charts,
+    xuat_bao_cao_bac_si_pdf,
+)
+from reportlab.graphics.shapes import Rect, String
+from reportlab.lib import colors
 
 
 class PdfExportTests(unittest.TestCase):
@@ -48,6 +54,65 @@ class PdfExportTests(unittest.TestCase):
                 bieu_do=[{"label": "Nguyễn Văn A", "value": Decimal("125000")}],
             )
             self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
+
+    def test_exports_combined_doctor_report_for_all_rows(self) -> None:
+        rows = [
+            {
+                "ma_bac_si": doctor_id,
+                "ten_bac_si": f"Bác sĩ {doctor_id}",
+                "so_luot_kham": doctor_id,
+                "so_benh_nhan": doctor_id,
+                "gia_kham": Decimal("150000"),
+                "gia_xet_nghiem": Decimal("90000"),
+                "gia_thuoc": Decimal("20000"),
+                "tong_gia_tri": Decimal(doctor_id * 260000),
+            }
+            for doctor_id in range(1, 13)
+        ]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_path = Path(temporary_directory) / "bao_cao_bac_si.pdf"
+            result = xuat_bao_cao_bac_si_pdf(output_path, 10, 2026, rows)
+
+            self.assertEqual(result, output_path)
+            self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
+            self.assertIn(b"NotoSans", output_path.read_bytes())
+
+    def test_builds_paired_horizontal_bars_and_splits_large_reports(self) -> None:
+        rows = [
+            {
+                "ten_bac_si": f"Bác sĩ {doctor_id}",
+                "so_luot_kham": doctor_id,
+                "tong_gia_tri": Decimal(doctor_id * 1000),
+            }
+            for doctor_id in range(9)
+        ]
+
+        charts = _build_horizontal_bar_charts(rows, 700)
+
+        self.assertEqual(len(charts), 3)
+        self.assertLess(charts[0].height, 150)
+        labels = [
+            shape.text
+            for chart in charts
+            for shape in chart.contents
+            if isinstance(shape, String)
+        ]
+        self.assertIn("Bác sĩ 0", labels)
+        self.assertIn("Bác sĩ 8", labels)
+        self.assertTrue(any("Số lượt khám" in label for label in labels))
+        self.assertTrue(any("Tổng giá trị ghi nhận" in label for label in labels))
+        colored_bars = [
+            shape
+            for chart in charts
+            for shape in chart.contents
+            if isinstance(shape, Rect)
+            and (
+                shape.fillColor == colors.HexColor("#168AAD")
+                or shape.fillColor == colors.HexColor("#E58A2B")
+            )
+            and shape.width > 8
+        ]
+        self.assertEqual(len(colored_bars), 16)
 
     def test_exports_vietnamese_visit_report_with_completed_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

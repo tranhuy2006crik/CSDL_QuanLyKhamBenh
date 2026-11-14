@@ -1,9 +1,19 @@
+import calendar
+import queue
 import tkinter as tk
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from threading import Thread
 from tkinter import messagebox, ttk
+from typing import Any
 
-from app.contracts import AppointmentStatus, BacSiDTO, BenhNhanDTO, LichHenDTO
+from app.contracts import (
+    AppointmentStatus,
+    BacSiDTO,
+    BenhNhanDTO,
+    Identifier,
+    LichHenDTO,
+)
 from app.errors import AppError
 from app.services.appointment_service import (
     cap_nhat_trang_thai,
@@ -12,7 +22,6 @@ from app.services.appointment_service import (
     dat_lich,
     doi_lich,
     gan_phieu_vao_lich,
-    gio_trong_30_ngay,
     huy_lich,
     hien_lich_da_an,
     lich_theo_bac_si,
@@ -37,23 +46,176 @@ STATUS_LABELS = {
 }
 
 
-def _parse_date(value: str) -> date:
-    try:
-        return datetime.strptime(value.strip(), "%d/%m/%Y").date()
-    except ValueError as error:
-        raise AppError(
-            "DU_LIEU_KHONG_HOP_LE",
-            "Ngày phải theo định dạng dd/mm/yyyy.",
-            "ngay_hen",
-        ) from error
-
-
-def _format_date(value: datetime) -> str:
-    return value.strftime("%d/%m/%Y")
-
-
 def _format_datetime(value: datetime) -> str:
     return value.strftime("%d/%m/%Y %H:%M")
+
+
+class CalendarDatePicker(ttk.Frame):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        value: date,
+        on_change: Callable[[], None],
+        minimum: date | None = None,
+        maximum: date | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.value = value
+        self.on_change = on_change
+        self.minimum = minimum
+        self.maximum = maximum
+        self.entry = ttk.Entry(self, width=12, state="readonly")
+        self.entry.pack(side="left")
+        ttk.Button(
+            self,
+            text="Lịch",
+            command=self._open_calendar,
+            style="Secondary.TButton",
+        ).pack(side="left", padx=(4, 0))
+        self._update_entry()
+
+    def get_date(self) -> date:
+        return self.value
+
+    def set_date(self, value: date, notify: bool = True) -> None:
+        if isinstance(value, datetime) or not isinstance(value, date):
+            raise ValueError("Ngày phải là một giá trị date.")
+        self.value = value
+        self._update_entry()
+        if notify:
+            self.on_change()
+
+    def _update_entry(self) -> None:
+        self.entry.configure(state="normal")
+        self.entry.delete(0, "end")
+        self.entry.insert(0, self.value.strftime("%d/%m/%Y"))
+        self.entry.configure(state="readonly")
+
+    @staticmethod
+    def _month_key(value: date) -> tuple[int, int]:
+        return value.year, value.month
+
+    def _open_calendar(self) -> None:
+        popup = tk.Toplevel(self)
+        popup.title("Chọn ngày hẹn")
+        popup.transient(self.winfo_toplevel())
+        popup.resizable(False, False)
+        popup.columnconfigure(0, weight=1)
+        popup.grab_set()
+
+        month = {"year": self.value.year, "month": self.value.month}
+        header = ttk.Frame(popup, padding=(10, 10, 10, 4))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        calendar_body = ttk.Frame(popup, padding=(10, 4, 10, 10))
+        calendar_body.grid(row=1, column=0, sticky="nsew")
+
+        def move_month(offset: int) -> None:
+            year, month_number = month["year"], month["month"] + offset
+            if month_number < 1:
+                year -= 1
+                month_number = 12
+            elif month_number > 12:
+                year += 1
+                month_number = 1
+            if not 1 <= year <= 9999:
+                return
+            month.update(year=year, month=month_number)
+            render()
+
+        def select_day(day: int) -> None:
+            self.set_date(date(month["year"], month["month"], day))
+            popup.destroy()
+
+        def render() -> None:
+            for child in header.winfo_children():
+                child.destroy()
+            for child in calendar_body.winfo_children():
+                child.destroy()
+
+            current_month = date(month["year"], month["month"], 1)
+            previous_month = date(
+                month["year"] - (month["month"] == 1),
+                12 if month["month"] == 1 else month["month"] - 1,
+                1,
+            )
+            next_month = date(
+                month["year"] + (month["month"] == 12),
+                1 if month["month"] == 12 else month["month"] + 1,
+                1,
+            )
+            ttk.Button(
+                header,
+                text="‹",
+                width=3,
+                state=(
+                    "normal"
+                    if (
+                        self.minimum is None
+                        or self._month_key(previous_month)
+                        >= self._month_key(self.minimum)
+                    )
+                    else "disabled"
+                ),
+                command=lambda: move_month(-1),
+            ).grid(row=0, column=0)
+            ttk.Label(
+                header,
+                text=current_month.strftime("%m/%Y"),
+                font=("Segoe UI", 10, "bold"),
+                anchor="center",
+            ).grid(row=0, column=1, sticky="ew", padx=8)
+            ttk.Button(
+                header,
+                text="›",
+                width=3,
+                state=(
+                    "normal"
+                    if (
+                        self.maximum is None
+                        or self._month_key(next_month)
+                        <= self._month_key(self.maximum)
+                    )
+                    else "disabled"
+                ),
+                command=lambda: move_month(1),
+            ).grid(row=0, column=2)
+
+            for column, weekday in enumerate(
+                ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
+            ):
+                ttk.Label(
+                    calendar_body, text=weekday, width=4, anchor="center"
+                ).grid(row=0, column=column, pady=(0, 4))
+            for row_index, week in enumerate(
+                calendar.monthcalendar(month["year"], month["month"]), start=1
+            ):
+                for column, day in enumerate(week):
+                    if day == 0:
+                        continue
+                    selected_date = date(month["year"], month["month"], day)
+                    ttk.Button(
+                        calendar_body,
+                        text=str(day),
+                        width=4,
+                        state=(
+                            "normal"
+                            if (
+                                (self.minimum is None or selected_date >= self.minimum)
+                                and (
+                                    self.maximum is None
+                                    or selected_date <= self.maximum
+                                )
+                            )
+                            else "disabled"
+                        ),
+                        command=lambda selected_day=day: select_day(selected_day),
+                    ).grid(row=row_index, column=column, padx=1, pady=1)
+
+        render()
+        popup.update_idletasks()
+        popup.geometry(f"+{self.winfo_rootx()}+{self.winfo_rooty() + self.winfo_height()}")
+        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
 
 class ScrollableFrame(ttk.Frame):
@@ -95,6 +257,8 @@ class AppointmentCard(tk.Frame):
         title: str,
         details: tuple[str, ...],
         on_select: Callable[[], None],
+        status: str | None = None,
+        status_color: str = "#526574",
     ) -> None:
         super().__init__(
             parent,
@@ -125,6 +289,15 @@ class AppointmentCard(tk.Frame):
                 justify="left",
                 wraplength=950,
             ).pack(fill="x", pady=(3, 0))
+        if status:
+            tk.Label(
+                self,
+                text=status,
+                background="#FFFFFF",
+                foreground=status_color,
+                font=("Segoe UI", 10, "bold"),
+                anchor="w",
+            ).pack(fill="x", pady=(5, 0))
         self._bind_click(self, on_select)
 
     def _bind_click(self, widget: tk.Widget, callback: Callable[[], None]) -> None:
@@ -228,6 +401,22 @@ class PatientAppointmentView(ttk.Frame):
         self.appointment_cards: dict[str, AppointmentCard] = {}
         self.selected_appointment_id: str | None = None
         self.show_hidden = tk.BooleanVar(value=False)
+        self._background_results: queue.Queue[
+            tuple[str, int, Any, Exception | None]
+        ] = queue.Queue()
+        self._background_callbacks: dict[
+            str,
+            tuple[
+                int,
+                Callable[[Any], None],
+                Callable[[Exception], None] | None,
+            ],
+        ] = {}
+        self._background_sequences: dict[str, int] = {}
+        self._background_poll_id: str | None = None
+        self._slots_request = 0
+        self._mutation_in_progress = False
+        self.bind("<Destroy>", self._cancel_background_poll, add="+")
 
         ttk.Label(
             self,
@@ -257,18 +446,16 @@ class PatientAppointmentView(ttk.Frame):
         ttk.Label(booking, text="Bác sĩ").grid(row=0, column=2, sticky="w")
         self.doctor_choice = ttk.Combobox(booking, state="readonly", width=32)
         self.doctor_choice.grid(row=0, column=3, sticky="ew", padx=(5, 12))
-        ttk.Label(booking, text="Ngày (dd/mm/yyyy)").grid(
-            row=0, column=4, sticky="w"
-        )
-        self.booking_date = ttk.Entry(booking, width=14)
-        self.booking_date.grid(row=0, column=5, padx=5)
-        self.booking_date.insert(0, date.today().strftime("%d/%m/%Y"))
-        ttk.Button(
+        ttk.Label(booking, text="Ngày hẹn").grid(row=0, column=4, sticky="w")
+        self.booking_date = CalendarDatePicker(
             booking,
-            text="Tìm giờ trống",
-            command=self._find_slots,
-            style="Secondary.TButton",
-        ).grid(row=0, column=6, padx=(5, 0))
+            date.today(),
+            self._find_slots,
+            minimum=date.today(),
+            maximum=date.today() + timedelta(days=30),
+        )
+        self.booking_date.grid(row=0, column=5, sticky="w", padx=5)
+        self.doctor_choice.bind("<<ComboboxSelected>>", self._find_slots)
 
         self.book_button = ttk.Button(
             booking,
@@ -293,14 +480,8 @@ class PatientAppointmentView(ttk.Frame):
             style="Danger.TButton",
         )
         self.cancel_button.grid(row=1, column=2, sticky="w", padx=(5, 0), pady=(8, 0))
-        ttk.Button(
-            booking,
-            text="Tìm ngày gần nhất có giờ",
-            command=self._find_next_available,
-            style="Secondary.TButton",
-        ).grid(row=1, column=3, sticky="w", padx=(5, 0), pady=(8, 0))
         self.slot_status = ttk.Label(booking, text="Chọn bác sĩ và ngày để xem giờ.")
-        self.slot_status.grid(row=2, column=0, columnspan=7, sticky="w", pady=(8, 0))
+        self.slot_status.grid(row=2, column=0, columnspan=6, sticky="w", pady=(8, 0))
 
         slot_frame = ttk.LabelFrame(self, text="Khung giờ 30 phút", padding=6)
         slot_frame.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
@@ -340,93 +521,236 @@ class PatientAppointmentView(ttk.Frame):
         self._load_departments()
         self._refresh_appointments()
 
-    def _load_departments(self) -> None:
-        try:
-            rows = lay_khoa()
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self.departments = {
-            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-            for row in rows
-        }
-        self.department["values"] = list(self.departments)
-        if self.departments:
-            self.department.current(0)
-            self._department_changed()
+    def _run_in_background(
+        self,
+        task_name: str,
+        task: Callable[[], Any],
+        on_success: Callable[[Any], None],
+        on_error: Callable[[Exception], None] | None = None,
+    ) -> None:
+        sequence = self._background_sequences.get(task_name, 0) + 1
+        self._background_sequences[task_name] = sequence
+        self._background_callbacks[task_name] = (
+            sequence,
+            on_success,
+            on_error,
+        )
 
-    def _department_changed(self, _event: tk.Event | None = None) -> None:
-        department_id = self.departments.get(self.department.get())
-        try:
-            rows = lay_danh_sach_bac_si(department_id)
-        except Exception as error:
+        def run() -> None:
+            try:
+                result = task()
+            except Exception as error:
+                self._background_results.put(
+                    (task_name, sequence, None, error)
+                )
+            else:
+                self._background_results.put(
+                    (task_name, sequence, result, None)
+                )
+
+        Thread(target=run, daemon=True).start()
+        if self._background_poll_id is None:
+            self._background_poll_id = self.after(30, self._poll_background_tasks)
+
+    def _poll_background_tasks(self) -> None:
+        self._background_poll_id = None
+        while True:
+            try:
+                task_name, sequence, result, error = (
+                    self._background_results.get_nowait()
+                )
+            except queue.Empty:
+                break
+            callback = self._background_callbacks.get(task_name)
+            if callback is None or callback[0] != sequence:
+                continue
+            del self._background_callbacks[task_name]
+            _sequence, on_success, on_error = callback
+            if error is not None:
+                if on_error is not None:
+                    on_error(error)
+                else:
+                    hien_loi(self, error)
+            else:
+                on_success(result)
+        if self._background_callbacks and self.winfo_exists():
+            self._background_poll_id = self.after(
+                30, self._poll_background_tasks
+            )
+
+    def _cancel_background_poll(self, event: tk.Event) -> None:
+        if event.widget is self and self._background_poll_id is not None:
+            self.after_cancel(self._background_poll_id)
+            self._background_poll_id = None
+
+    def _set_mutation_busy(self, busy: bool) -> None:
+        self._mutation_in_progress = busy
+        self.book_button.configure(state="disabled" if busy else "normal")
+        appointment = self._selected_appointment()
+        active = (
+            not busy
+            and appointment is not None
+            and appointment["trang_thai"] == "CONFIRMED"
+            and datetime.now() < appointment["bat_dau"]
+        )
+        state = "normal" if active else "disabled"
+        self.reschedule_button.configure(state=state)
+        self.cancel_button.configure(state=state)
+
+    def _load_departments(self) -> None:
+        self.slot_status.configure(text="Đang tải danh sách khoa...")
+
+        def loaded(rows: list[dict[str, Any]]) -> None:
+            self.departments = {
+                f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
+                for row in rows
+            }
+            self.department["values"] = list(self.departments)
+            if self.departments:
+                self.department.current(0)
+                self._department_changed()
+            else:
+                self.slot_status.configure(text="Chưa có khoa để đặt lịch.")
+
+        def failed(error: Exception) -> None:
+            self.slot_status.configure(text="Không tải được danh sách khoa.")
             hien_loi(self, error)
-            return
-        self.doctors = {
-            f'{row["ten_bac_si"]} (Mã {row["ma_bac_si"]})': row for row in rows
-        }
-        self.doctor_choice["values"] = list(self.doctors)
-        if self.doctors:
-            self.doctor_choice.current(0)
-        else:
-            self.doctor_choice.set("")
+
+        self._run_in_background("departments", lay_khoa, loaded, failed)
+
+    def _department_changed(
+        self,
+        _event: tk.Event | None = None,
+        selected_doctor_id: Identifier | None = None,
+    ) -> None:
+        department_id = self.departments.get(self.department.get())
+        self.doctors.clear()
+        self.doctor_choice.set("")
+        self.doctor_choice["values"] = ()
         self.slots.clear()
+        self.slot_statuses.clear()
         self.selected_slot = None
         self._render_slots()
-        if self.doctors:
-            self._find_next_available()
+        if department_id is None:
+            self.slot_status.configure(text="Hãy chọn khoa.")
+            return
+        self.slot_status.configure(text="Đang tải danh sách bác sĩ...")
+
+        def loaded(rows: list[BacSiDTO]) -> None:
+            self.doctors = {
+                f'{row["ten_bac_si"]} (Mã {row["ma_bac_si"]})': row for row in rows
+            }
+            self.doctor_choice["values"] = list(self.doctors)
+            selected_label = next(
+                (
+                    label
+                    for label, doctor in self.doctors.items()
+                    if doctor["ma_bac_si"] == selected_doctor_id
+                ),
+                None,
+            )
+            if selected_label is not None:
+                self.doctor_choice.set(selected_label)
+            elif self.doctors:
+                self.doctor_choice.current(0)
+            if self.doctors:
+                self._find_slots()
+            else:
+                self.slot_status.configure(
+                    text="Khoa này chưa có bác sĩ để đặt lịch."
+                )
+
+        def failed(error: Exception) -> None:
+            self.slot_status.configure(text="Không tải được danh sách bác sĩ.")
+            hien_loi(self, error)
+
+        self._run_in_background(
+            "doctors",
+            lambda: lay_danh_sach_bac_si(department_id),
+            loaded,
+            failed,
+        )
 
     def _selected_appointment(self) -> LichHenDTO | None:
         if self.selected_appointment_id is None:
             return None
         return self.appointments.get(self.selected_appointment_id)
 
-    def _find_slots(self) -> None:
+    def _find_slots(self, _event: tk.Event | None = None) -> None:
+        self._slots_request += 1
+        request = self._slots_request
         doctor = self.doctors.get(self.doctor_choice.get())
         if doctor is None:
-            self.slot_status.configure(text="Hãy chọn khoa và bác sĩ.")
-            return
-        try:
-            selected_date = _parse_date(self.booking_date.get())
-            appointment = self._selected_appointment()
-            is_rescheduling_same_day = (
-                appointment is not None
-                and appointment["trang_thai"] == "CONFIRMED"
-                and appointment["ma_bac_si"] == doctor["ma_bac_si"]
-                and appointment["bat_dau"].date() == selected_date
-            )
-            exclude_id = (
-                appointment["ma_lich"]
-                if is_rescheduling_same_day
-                else None
-            )
-            slots = cac_khung_gio_trong_ngay(
-                doctor["ma_bac_si"],
-                selected_date,
-                exclude_ma_lich=exclude_id,
-            )
-        except Exception as error:
             self.slots.clear()
             self.slot_statuses.clear()
             self.selected_slot = None
             self._render_slots()
+            self.slot_status.configure(text="Hãy chọn khoa và bác sĩ.")
+            return
+        try:
+            selected_date = self.booking_date.get_date()
+            appointment = self._selected_appointment()
+            if (
+                appointment is not None
+                and appointment["trang_thai"] == "CONFIRMED"
+                and datetime.now() < appointment["bat_dau"]
+                and appointment["ma_bac_si"] != doctor["ma_bac_si"]
+            ):
+                self.slots.clear()
+                self.slot_statuses.clear()
+                self.selected_slot = None
+                self._render_slots()
+                self.slot_status.configure(
+                    text="Đổi lịch chỉ áp dụng với bác sĩ hiện tại của lịch hẹn."
+                )
+                return
+            doctor_id = doctor["ma_bac_si"]
+        except Exception as error:
             hien_loi(self, error)
             return
-        self.slot_statuses = dict(slots)
-        available = [slot for slot, status in slots if status == "available"]
-        self.slots = {slot.strftime("%H:%M"): slot for slot in available}
-        if available and not is_rescheduling_same_day:
-            self.selected_slot = available[0]
-        else:
-            self.selected_slot = None
-        self.slot_status.configure(
-            text=(
-                f"Còn {len(available)} khung giờ. Chọn ô màu xanh để tiếp tục."
-                if available
-                else "Ngày này không còn khung giờ phù hợp."
-            )
-        )
+        self.slots.clear()
+        self.slot_statuses.clear()
+        self.selected_slot = None
         self._render_slots()
+        self.slot_status.configure(
+            text=f"Đang tải khung giờ ngày {selected_date:%d/%m/%Y}..."
+        )
+
+        def loaded(rows: list[tuple[datetime, str]]) -> None:
+            current_doctor = self.doctors.get(self.doctor_choice.get())
+            if (
+                request != self._slots_request
+                or self.booking_date.get_date() != selected_date
+                or current_doctor is None
+                or current_doctor["ma_bac_si"] != doctor_id
+            ):
+                return
+            self.slot_statuses = dict(rows)
+            available = [slot for slot, status in rows if status == "available"]
+            self.slots = {slot.strftime("%H:%M"): slot for slot in available}
+            self.selected_slot = available[0] if available else None
+            self.slot_status.configure(
+                text=(
+                    f"Còn {len(available)} khung giờ ngày {selected_date:%d/%m/%Y}. "
+                    "Chọn ô màu xanh để tiếp tục."
+                    if available
+                    else f"Ngày {selected_date:%d/%m/%Y} không còn khung giờ phù hợp."
+                )
+            )
+            self._render_slots()
+
+        def failed(error: Exception) -> None:
+            if request != self._slots_request:
+                return
+            self.slot_status.configure(text="Không tải được khung giờ.")
+            hien_loi(self, error)
+
+        self._run_in_background(
+            "slots",
+            lambda: cac_khung_gio_trong_ngay(doctor_id, selected_date),
+            loaded,
+            failed,
+        )
 
     def _render_slots(self) -> None:
         for child in self.slot_grid.content.winfo_children():
@@ -477,33 +801,6 @@ class PatientAppointmentView(ttk.Frame):
         self.selected_slot = slot
         self._render_slots()
 
-    def _find_next_available(self) -> None:
-        doctor = self.doctors.get(self.doctor_choice.get())
-        if doctor is None:
-            self.slot_status.configure(text="Hãy chọn khoa và bác sĩ.")
-            return
-        try:
-            availability = gio_trong_30_ngay(doctor["ma_bac_si"])
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        if not availability:
-            self.slots.clear()
-            self.slot_statuses.clear()
-            self.selected_slot = None
-            self._render_slots()
-            self.slot_status.configure(
-                text="Bác sĩ không có khung giờ trống trong 30 ngày tới."
-            )
-            return
-        next_date, next_slots = next(iter(availability.items()))
-        self.booking_date.delete(0, "end")
-        self.booking_date.insert(0, next_date.strftime("%d/%m/%Y"))
-        self._find_slots()
-        self.slot_status.configure(
-            text=f"Ngày gần nhất có giờ trống: {next_date:%d/%m/%Y} ({len(next_slots)} khung giờ)."
-        )
-
     def _book(self) -> None:
         doctor = self.doctors.get(self.doctor_choice.get())
         slot = self.selected_slot
@@ -512,26 +809,37 @@ class PatientAppointmentView(ttk.Frame):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Hãy chọn bác sĩ và tải/chọn một khung giờ còn trống.",
+                    "Hãy chọn bác sĩ, ngày và một khung giờ còn trống.",
                 ),
             )
             return
-        try:
-            dat_lich(
+        self._set_mutation_busy(True)
+        self.slot_status.configure(text="Đang xác nhận lịch hẹn...")
+
+        def booked(_appointment: LichHenDTO) -> None:
+            self._set_mutation_busy(False)
+            messagebox.showinfo(
+                "Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self
+            )
+            self._refresh_appointments()
+            self._find_slots()
+
+        def failed(error: Exception) -> None:
+            self._set_mutation_busy(False)
+            hien_loi(self, error)
+            self._find_slots()
+
+        self._run_in_background(
+            "booking",
+            lambda: dat_lich(
                 self.patient["ma_benh_nhan"],
                 self.patient["ho_ten"],
                 doctor["ma_bac_si"],
                 slot,
-            )
-        except Exception as error:
-            hien_loi(self, error)
-            self._find_slots()
-            return
-        messagebox.showinfo(
-            "Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self
+            ),
+            booked,
+            failed,
         )
-        self._refresh_appointments()
-        self._find_slots()
 
     def _reschedule(self) -> None:
         appointment = self._selected_appointment()
@@ -542,7 +850,7 @@ class PatientAppointmentView(ttk.Frame):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Chọn lịch cần đổi, ngày mới, rồi tìm và chọn giờ trống.",
+                    "Chọn lịch cần đổi, ngày mới và một khung giờ còn trống.",
                 ),
             )
             return
@@ -556,15 +864,30 @@ class PatientAppointmentView(ttk.Frame):
                 ),
             )
             return
-        try:
-            doi_lich(appointment["ma_lich"], self.patient["ma_benh_nhan"], slot)
-        except Exception as error:
+        self._set_mutation_busy(True)
+        self.slot_status.configure(text="Đang cập nhật lịch hẹn...")
+
+        def rescheduled(_updated: LichHenDTO) -> None:
+            self._set_mutation_busy(False)
+            messagebox.showinfo("Đổi lịch", "Đã cập nhật giờ hẹn.", parent=self)
+            self._refresh_appointments()
+
+        def failed(error: Exception) -> None:
+            self._set_mutation_busy(False)
             hien_loi(self, error)
             self._find_slots()
-            return
-        messagebox.showinfo("Đổi lịch", "Đã cập nhật giờ hẹn.", parent=self)
-        self._refresh_appointments()
-        self._find_slots()
+            self._appointment_selected()
+
+        self._run_in_background(
+            "rescheduling",
+            lambda: doi_lich(
+                appointment["ma_lich"],
+                self.patient["ma_benh_nhan"],
+                slot,
+            ),
+            rescheduled,
+            failed,
+        )
 
     def _cancel(self) -> None:
         appointment = self._selected_appointment()
@@ -573,18 +896,30 @@ class PatientAppointmentView(ttk.Frame):
         reason = _ask_cancel_reason(self, appointment)
         if reason is None:
             return
-        try:
-            huy_lich(
+        self._set_mutation_busy(True)
+
+        def cancelled(_result: None) -> None:
+            self._set_mutation_busy(False)
+            self.selected_appointment_id = None
+            self._refresh_appointments()
+            self._find_slots()
+
+        def failed(error: Exception) -> None:
+            self._set_mutation_busy(False)
+            hien_loi(self, error)
+            self._appointment_selected()
+
+        self._run_in_background(
+            "cancelling",
+            lambda: huy_lich(
                 appointment["ma_lich"],
                 "patient",
                 self.patient["ma_benh_nhan"],
                 reason,
-            )
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self._refresh_appointments()
-        self._find_slots()
+            ),
+            cancelled,
+            failed,
+        )
 
     def _appointment_selected(self, _event: tk.Event | None = None) -> None:
         appointment = self._selected_appointment()
@@ -594,6 +929,7 @@ class PatientAppointmentView(ttk.Frame):
             appointment is not None
             and appointment["trang_thai"] == "CONFIRMED"
             and datetime.now() < appointment["bat_dau"]
+            and not self._mutation_in_progress
         )
         state = "normal" if active else "disabled"
         self.reschedule_button.configure(state=state)
@@ -613,51 +949,46 @@ class PatientAppointmentView(ttk.Frame):
         )
         if appointment is None:
             return
-        doctor = next(
-            (
-                item
-                for item in self.doctors.values()
-                if item["ma_bac_si"] == appointment["ma_bac_si"]
-            ),
-            None,
-        )
-        if doctor is not None:
-            department_name = next(
-                (
-                    label
-                    for label, department_id in self.departments.items()
-                    if department_id == doctor["ma_khoa"]
-                ),
-                None,
-            )
-            if department_name:
-                self.department.set(department_name)
-                self._department_changed()
-                doctor_label = next(
-                    (
-                        label
-                        for label, item in self.doctors.items()
-                        if item["ma_bac_si"] == appointment["ma_bac_si"]
-                    ),
-                    "",
-                )
-                self.doctor_choice.set(doctor_label)
-        self.booking_date.delete(0, "end")
-        self.booking_date.insert(0, _format_date(appointment["bat_dau"]))
-        if (
-            appointment["trang_thai"] != "CONFIRMED"
-            or not date.today()
-            <= appointment["bat_dau"].date()
-            <= date.today() + timedelta(days=30)
-        ):
+        self.booking_date.set_date(appointment["bat_dau"].date(), notify=False)
+        if not date.today() <= appointment["bat_dau"].date() <= date.today() + timedelta(days=30):
             self.slots.clear()
             self.slot_statuses.clear()
             self.selected_slot = None
             self.slot_status.configure(
-                text="Lịch đã xử lý hoặc ngoài thời hạn đặt lịch; không có giờ để đổi."
+                text="Ngày lịch này ngoài thời hạn đặt lịch; không có giờ để đổi."
             )
             self._render_slots()
             return
+
+        department_label = next(
+            (
+                label
+                for label in self.departments
+                if label.split(" (Mã ", 1)[0] == appointment["ten_khoa"]
+            ),
+            None,
+        )
+        current_doctor = self.doctors.get(self.doctor_choice.get())
+        if department_label is not None and (
+            self.department.get() != department_label
+            or current_doctor is None
+            or current_doctor["ma_bac_si"] != appointment["ma_bac_si"]
+        ):
+            self.department.set(department_label)
+            self._department_changed(
+                selected_doctor_id=appointment["ma_bac_si"]
+            )
+            return
+        doctor_label = next(
+            (
+                label
+                for label, doctor in self.doctors.items()
+                if doctor["ma_bac_si"] == appointment["ma_bac_si"]
+            ),
+            None,
+        )
+        if doctor_label is not None:
+            self.doctor_choice.set(doctor_label)
         self._find_slots()
 
     def _select_appointment(self, appointment_id: str) -> None:
@@ -685,8 +1016,8 @@ class PatientAppointmentView(ttk.Frame):
             key = str(row["ma_lich"])
             self.appointments[key] = row
             details = [
-                f'{_format_datetime(row["bat_dau"])} · {row["ten_khoa"]}',
-                f'Trạng thái: {STATUS_LABELS[row["trang_thai"]]}',
+                f'Bác sĩ: {row["ten_bac_si"]} · Khoa: {row["ten_khoa"]}',
+                f'{_format_datetime(row["bat_dau"])}–{row["ket_thuc"]:%H:%M}',
             ]
             if row["ly_do_huy"]:
                 details.append(f'Lý do hủy: {row["ly_do_huy"]}')
@@ -694,9 +1025,17 @@ class PatientAppointmentView(ttk.Frame):
                 details.append("Lịch đang được ẩn")
             card = AppointmentCard(
                 self.appointment_list.content,
-                f'{row["ten_bac_si"]} · Mã lịch {row["ma_lich"]}',
+                f'Mã lịch {row["ma_lich"]}',
                 tuple(details),
                 lambda current=key: self._select_appointment(current),
+                status=STATUS_LABELS[row["trang_thai"]],
+                status_color={
+                    "CONFIRMED": "#8A5A00",
+                    "ARRIVED": "#1677A5",
+                    "COMPLETED": "#1F7A3D",
+                    "NO_SHOW": "#B42318",
+                    "CANCELLED": "#B42318",
+                }[row["trang_thai"]],
             )
             card.pack(fill="x", padx=5, pady=4)
             card.set_selected(key == self.selected_appointment_id)
@@ -747,11 +1086,13 @@ class DoctorAppointmentView(ttk.Frame):
         controls = ttk.Frame(self)
         controls.grid(row=0, column=1, sticky="e")
         self.columnconfigure(1, weight=1)
-        ttk.Label(controls, text="Ngày (dd/mm/yyyy)").pack(side="left")
-        self.selected_date = ttk.Entry(controls, width=14)
+        ttk.Label(controls, text="Ngày").pack(side="left")
+        self.selected_date = CalendarDatePicker(
+            controls,
+            date.today(),
+            self._refresh,
+        )
         self.selected_date.pack(side="left", padx=5)
-        self.selected_date.insert(0, date.today().strftime("%d/%m/%Y"))
-        ttk.Button(controls, text="Tải lịch", command=self._refresh).pack(side="left")
         ttk.Label(
             self,
             text=(
@@ -839,7 +1180,7 @@ class DoctorAppointmentView(ttk.Frame):
 
     def _refresh(self) -> None:
         try:
-            selected_date = _parse_date(self.selected_date.get())
+            selected_date = self.selected_date.get_date()
             rows = lich_theo_bac_si(
                 self.doctor["ma_bac_si"],
                 selected_date,

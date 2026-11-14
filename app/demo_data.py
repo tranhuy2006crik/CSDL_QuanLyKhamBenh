@@ -38,6 +38,7 @@ class DemoClinicData:
                 "ten_bac_si": "Nguyễn Minh An (DEMO)",
                 "ma_khoa": DEMO_DEPARTMENT_ID,
                 "gia_kham": Decimal("150000"),
+                "trinh_do_hoc_van": "Bác sĩ chuyên khoa I (DEMO)",
                 "phong_kham": "P. DEMO-01",
             },
             {
@@ -45,6 +46,7 @@ class DemoClinicData:
                 "ten_bac_si": "Trần Thu Hà (DEMO)",
                 "ma_khoa": DEMO_SECOND_DEPARTMENT_ID,
                 "gia_kham": Decimal("180000"),
+                "trinh_do_hoc_van": "Thạc sĩ (DEMO)",
                 "phong_kham": "P. DEMO-02",
             },
         ]
@@ -191,6 +193,8 @@ class DemoClinicData:
                 "ma_bac_si": DEMO_DOCTOR_ID,
                 "ten_bac_si": "Nguyễn Minh An (DEMO)",
                 "phong_kham": "P. DEMO-01",
+                "gia_kham": Decimal("150000"),
+                "trinh_do_hoc_van": "Bác sĩ chuyên khoa I (DEMO)",
                 "thu": weekday,
                 "gio_bat_dau": start,
                 "gio_ket_thuc": end,
@@ -203,6 +207,8 @@ class DemoClinicData:
                 "ma_bac_si": DEMO_SECOND_DOCTOR_ID,
                 "ten_bac_si": "Trần Thu Hà (DEMO)",
                 "phong_kham": "P. DEMO-02",
+                "gia_kham": Decimal("180000"),
+                "trinh_do_hoc_van": "Thạc sĩ (DEMO)",
                 "thu": "Thứ Ba",
                 "gio_bat_dau": timedelta(hours=8),
                 "gio_ket_thuc": timedelta(hours=12),

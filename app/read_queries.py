@@ -216,6 +216,8 @@ SELECT
     bs.MaBacSi AS ma_bac_si,
     bs.HoTen AS ten_bac_si,
     bs.PhongKham AS phong_kham,
+    bs.GiaKham AS gia_kham,
+    bs.TrinhDoHocVan AS trinh_do_hoc_van,
     lw.Thu AS thu,
     lw.GioBatDau AS gio_bat_dau,
     lw.GioKetThuc AS gio_ket_thuc

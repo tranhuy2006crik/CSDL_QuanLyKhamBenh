@@ -14,7 +14,7 @@ except ImportError:
 
 from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO, Identifier
 from app.errors import AppError
-from app.pdf_export import xuat_bang_pdf
+from app.doctor_report_pdf import xuat_bao_cao_bac_si_pdf
 from app.services.clinic_service import (
     bao_cao_bac_si,
     lay_lich_su_benh_nhan,
@@ -56,7 +56,7 @@ class DoctorPortal(ttk.Frame):
             style="Secondary.TButton",
         ).grid(row=0, column=1, sticky="e")
 
-        self.notebook = ttk.Notebook(self)
+        self.notebook = ttk.Notebook(self, style="Main.TNotebook")
         self.notebook.grid(row=1, column=0, sticky="nsew")
         self.patient_view = DoctorPatientSearchView(
             self.notebook,
@@ -1051,18 +1051,25 @@ class DoctorReportView(ttk.Frame):
         summary.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         for column in range(3):
             summary.columnconfigure(column, weight=1)
-        self.summary_doctors = ttk.Label(summary, text="Bác sĩ: 0")
+        self.summary_doctors = ttk.Label(summary, text="Số bác sĩ: 0")
         self.summary_doctors.grid(row=0, column=0, sticky="w")
-        self.summary_visits = ttk.Label(summary, text="Tổng lượt khám: 0")
+        self.summary_visits = ttk.Label(
+            summary,
+            text="Tổng lượt khám: 0",
+            font=("Segoe UI", 13, "bold"),
+            foreground="#111827",
+        )
         self.summary_visits.grid(row=0, column=1, sticky="w")
         self.summary_value = ttk.Label(
-            summary, text="Tổng giá trị: 0 VNĐ", font=("TkDefaultFont", 10, "bold")
+            summary,
+            text="Tổng giá trị khám: 0 VNĐ",
+            font=("Segoe UI", 13, "bold"),
+            foreground="#111827",
         )
         self.summary_value.grid(row=0, column=2, sticky="e")
 
-        content = ttk.Panedwindow(self, orient="vertical")
-        content.grid(row=3, column=0, sticky="nsew")
-        table_frame = ttk.Frame(content)
+        table_frame = ttk.Frame(self)
+        table_frame.grid(row=3, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
         columns = (
@@ -1105,37 +1112,6 @@ class DoctorReportView(ttk.Frame):
         )
         table_scroll.grid(row=0, column=1, sticky="ns")
         self.table.configure(yscrollcommand=table_scroll.set)
-        chart_frame = ttk.Frame(content)
-        chart_frame.columnconfigure(0, weight=1)
-        chart_frame.columnconfigure(1, weight=1)
-        for column, title in enumerate(
-            ("Số lượt khám (thang riêng)", "Tổng giá trị ghi nhận (thang riêng)")
-        ):
-            chart = ttk.LabelFrame(chart_frame, text=title)
-            chart.grid(
-                row=0,
-                column=column,
-                sticky="nsew",
-                padx=(0, 5) if column == 0 else (5, 0),
-            )
-            chart.rowconfigure(0, weight=1)
-            chart.columnconfigure(0, weight=1)
-            canvas = tk.Canvas(
-                chart, height=200, background="white", highlightthickness=0
-            )
-            canvas.grid(row=0, column=0, sticky="nsew")
-            canvas.bind(
-                "<Configure>",
-                lambda event, target=canvas, metric=(
-                    "so_luot_kham" if column == 0 else "tong_gia_tri"
-                ): self._draw_chart(event, target, metric),
-            )
-            if column == 0:
-                self.visit_chart = canvas
-            else:
-                self.value_chart = canvas
-        content.add(table_frame, weight=3)
-        content.add(chart_frame, weight=2)
 
         footer = ttk.Frame(self)
         footer.grid(row=4, column=0, sticky="ew", pady=(8, 0))
@@ -1147,7 +1123,7 @@ class DoctorReportView(ttk.Frame):
             footer,
             text="Xuất báo cáo PDF",
             command=self._export_pdf,
-            style="Primary.TButton",
+            style="Info.TButton",
         ).pack(side="right")
         self.rows: list[BaoCaoBacSiRow] = []
         self._refresh()
@@ -1195,71 +1171,20 @@ class DoctorReportView(ttk.Frame):
         self.summary_value.configure(
             text=f"Tổng giá trị khám: {dinh_dang_tien(total_amount)}"
         )
-        self._draw_chart(None, self.visit_chart, "so_luot_kham")
-        self._draw_chart(None, self.value_chart, "tong_gia_tri")
-
-    def _draw_chart(
-        self,
-        _event: tk.Event | None,
-        canvas: tk.Canvas,
-        metric: str,
-    ) -> None:
-        if not hasattr(self, "rows"):
-            return
-        canvas.delete("all")
-        width = max(canvas.winfo_width(), 500)
-        height = max(canvas.winfo_height(), 180)
-        rows = sorted(
-            self.rows,
-            key=lambda row: Decimal(str(row[metric] or 0)),
-            reverse=True,
-        )[:8]
-        if not rows:
-            canvas.create_text(
-                width // 2, height // 2, text="Không có dữ liệu cho bộ lọc hiện tại."
-            )
-            return
-        max_value = max(Decimal(str(row[metric] or 0)) for row in rows) or Decimal("1")
-        label_width = min(220, width // 3)
-        value_width = 140
-        chart_width = max(30, width - label_width - value_width - 35)
-        top = 18
-        row_height = max(14, min(34, (height - 24) // len(rows)))
-        for index, row in enumerate(rows):
-            y = top + index * row_height
-            name = str(row["ten_bac_si"])
-            if len(name) > 28:
-                name = name[:25] + "..."
-            canvas.create_text(
-                8, y + row_height // 2, text=name, anchor="w", fill="#20354A"
-            )
-            value = Decimal(str(row[metric] or 0))
-            bar_length = int(chart_width * value / max_value)
-            if value > 0:
-                canvas.create_rectangle(
-                    label_width,
-                    y + 5,
-                    label_width + max(2, bar_length),
-                    y + row_height - 5,
-                    fill="#168AAD",
-                    outline="",
-                )
-            canvas.create_text(
-                label_width + chart_width + 10,
-                y + row_height // 2,
-                text=(
-                    str(int(value))
-                    if metric == "so_luot_kham"
-                    else dinh_dang_tien(value)
-                ),
-                anchor="w",
-                fill="#20354A",
-            )
 
     def _export_pdf(self) -> None:
         if not self.rows:
             messagebox.showinfo(
                 "Xuất báo cáo", "Không có dữ liệu để xuất.", parent=self
+            )
+            return
+        try:
+            month = int(self.month.get())
+            year = int(self.year.get().strip())
+        except ValueError:
+            hien_loi(
+                self,
+                AppError("DU_LIEU_KHONG_HOP_LE", "Năm phải là số nguyên.", "nam"),
             )
             return
         path_text = filedialog.asksaveasfilename(
@@ -1271,66 +1196,12 @@ class DoctorReportView(ttk.Frame):
         )
         if not path_text:
             return
-        filters = [f"Tháng {self.month.get()}/{self.year.get()}"]
         try:
-            xuat_bang_pdf(
+            xuat_bao_cao_bac_si_pdf(
                 Path(path_text),
-                "BÁO CÁO GIÁ TRỊ KHÁM THEO BÁC SĨ",
-                "; ".join(filters),
-                [
-                    {"key": "ma_bac_si", "label": "Mã BS", "kind": "text"},
-                    {"key": "ten_bac_si", "label": "Bác sĩ", "kind": "text"},
-                    {
-                        "key": "so_luot_kham",
-                        "label": "Số lượt khám",
-                        "kind": "int",
-                    },
-                    {
-                        "key": "so_benh_nhan",
-                        "label": "Số bệnh nhân",
-                        "kind": "int",
-                    },
-                    {"key": "gia_kham", "label": "Tiền khám", "kind": "money"},
-                    {
-                        "key": "gia_xet_nghiem",
-                        "label": "Tiền xét nghiệm",
-                        "kind": "money",
-                    },
-                    {"key": "gia_thuoc", "label": "Tiền thuốc", "kind": "money"},
-                    {
-                        "key": "tong_gia_tri",
-                        "label": "Tổng giá trị khám",
-                        "kind": "money",
-                    },
-                ],
+                month,
+                year,
                 self.rows,
-                {
-                    "so_luot_kham": sum(int(row["so_luot_kham"]) for row in self.rows),
-                    "so_benh_nhan": sum(int(row["so_benh_nhan"]) for row in self.rows),
-                    "gia_kham": sum(
-                        (Decimal(str(row["gia_kham"] or 0)) for row in self.rows),
-                        Decimal("0"),
-                    ),
-                    "gia_xet_nghiem": sum(
-                        (Decimal(str(row["gia_xet_nghiem"] or 0)) for row in self.rows),
-                        Decimal("0"),
-                    ),
-                    "gia_thuoc": sum(
-                        (Decimal(str(row["gia_thuoc"] or 0)) for row in self.rows),
-                        Decimal("0"),
-                    ),
-                    "tong_gia_tri": sum(
-                        (Decimal(str(row["tong_gia_tri"] or 0)) for row in self.rows),
-                        Decimal("0"),
-                    ),
-                },
-                bieu_do=[
-                    {
-                        "label": str(row["ten_bac_si"]),
-                        "value": row["tong_gia_tri"],
-                    }
-                    for row in self.rows[:10]
-                ],
             )
         except Exception as error:
             hien_loi(self, error, "Không thể xuất báo cáo")

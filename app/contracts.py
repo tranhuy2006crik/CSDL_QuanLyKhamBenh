@@ -48,6 +48,8 @@ class LichLamViecDTO(TypedDict):
     ma_bac_si: Identifier
     ten_bac_si: str
     phong_kham: str | None
+    gia_kham: Decimal
+    trinh_do_hoc_van: str | None
     thu: str | int
     gio_bat_dau: time | timedelta
     gio_ket_thuc: time | timedelta

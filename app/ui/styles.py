@@ -11,6 +11,48 @@ def configure_styles(root: tk.Misc) -> None:
     style.configure(".", font=("Segoe UI", 10), background=background)
     style.configure("TFrame", background=background)
     style.configure("TLabel", background=background, foreground="#243746")
+    style.configure("TNotebook", background=background)
+    style.configure(
+        "TNotebook.Tab",
+        padding=(8, 4),
+        font=("Segoe UI", 9),
+        foreground="#243746",
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", "#FFFFFF"), ("active", "#E2EAF1")],
+        foreground=[("selected", "#183B56"), ("active", "#183B56")],
+    )
+    style.configure("Main.TNotebook", background=background)
+    style.configure(
+        "Main.TNotebook.Tab",
+        padding=(14, 7),
+        font=("Segoe UI", 10, "bold"),
+        foreground="#243746",
+    )
+    style.map(
+        "Main.TNotebook.Tab",
+        background=[("selected", "#FFFFFF"), ("active", "#E2EAF1")],
+        foreground=[("selected", "#183B56"), ("active", "#183B56")],
+    )
+    style.configure(
+        "SummaryHeading.TLabel",
+        background=background,
+        foreground="#526574",
+        font=("Segoe UI", 9, "bold"),
+    )
+    style.configure(
+        "SummaryValue.TLabel",
+        background=background,
+        foreground="#1677A5",
+        font=("Segoe UI", 17, "bold"),
+    )
+    style.configure(
+        "HistoryValue.TLabel",
+        background=background,
+        foreground="#243746",
+        font=("Segoe UI", 11),
+    )
     style.configure(
         "TLabelframe",
         background=background,

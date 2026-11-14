@@ -1,7 +1,7 @@
 from copy import deepcopy
 from datetime import date, datetime, time, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event, Thread
 import unittest
 from unittest.mock import patch
 
@@ -146,6 +146,82 @@ class AppointmentServiceTests(unittest.TestCase):
         new_slot = occupied_slot + timedelta(minutes=30)
         changed = doi_lich(first["ma_lich"], DEMO_PATIENT_ID, new_slot)
         self.assertEqual(changed["bat_dau"], new_slot)
+
+    def test_reschedule_does_not_make_original_slot_available(self) -> None:
+        booking_date = self._next_workday()
+        original_slot = self._next_slot(booking_date)
+        appointment = dat_lich(
+            DEMO_PATIENT_ID, "Bệnh nhân A", DEMO_DOCTOR_ID, original_slot
+        )
+
+        self.assertEqual(
+            dict(cac_khung_gio_trong_ngay(DEMO_DOCTOR_ID, booking_date))[
+                original_slot
+            ],
+            "booked",
+        )
+        with self.assertRaises(AppError) as same_slot:
+            doi_lich(appointment["ma_lich"], DEMO_PATIENT_ID, original_slot)
+        self.assertEqual(same_slot.exception.code, "KHUNG_GIO_KHONG_CON")
+
+    def test_booking_reuses_loaded_doctor_schedule(self) -> None:
+        booking_date = self._next_workday()
+        doctor_and_schedule = appointment_service._doctor_and_schedule(
+            DEMO_DOCTOR_ID
+        )
+        slot = datetime.combine(booking_date, time(8))
+        with (
+            patch.object(
+                appointment_service,
+                "_doctor_and_schedule",
+                return_value=doctor_and_schedule,
+            ) as load_doctor_schedule,
+            patch.object(
+                appointment_service, "_department_name", return_value="Khoa demo"
+            ),
+            patch.object(
+                appointment_service, "_slots_for_date", return_value=[slot]
+            ),
+            patch.object(appointment_service, "gio_con_trong") as reload_slots,
+        ):
+            dat_lich(DEMO_PATIENT_ID, "Bệnh nhân A", DEMO_DOCTOR_ID, slot)
+
+        load_doctor_schedule.assert_called_once_with(DEMO_DOCTOR_ID)
+        reload_slots.assert_not_called()
+
+    def test_reschedule_does_not_hold_session_lock_during_schedule_read(self) -> None:
+        first_date = self._next_workday()
+        second_date = self._next_workday(first_date)
+        original_slot = self._next_slot(first_date)
+        new_slot = self._next_slot(second_date)
+        appointment = dat_lich(
+            DEMO_PATIENT_ID, "Bệnh nhân A", DEMO_DOCTOR_ID, original_slot
+        )
+        lock_was_available = Event()
+
+        def verify_lock_available(*_args, **_kwargs):
+            def acquire_from_another_thread() -> None:
+                acquired = appointment_service._lock.acquire(timeout=1)
+                if acquired:
+                    lock_was_available.set()
+                    appointment_service._lock.release()
+
+            thread = Thread(target=acquire_from_another_thread)
+            thread.start()
+            thread.join(timeout=1.5)
+            return [new_slot]
+
+        with patch.object(
+            appointment_service,
+            "gio_con_trong",
+            side_effect=verify_lock_available,
+        ):
+            updated = doi_lich(
+                appointment["ma_lich"], DEMO_PATIENT_ID, new_slot
+            )
+
+        self.assertTrue(lock_was_available.is_set())
+        self.assertEqual(updated["bat_dau"], new_slot)
 
     def test_doctor_status_transitions_and_ownership(self) -> None:
         booking_date = date.today()

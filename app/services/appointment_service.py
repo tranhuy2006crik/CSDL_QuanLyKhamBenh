@@ -303,9 +303,11 @@ def dat_lich(
 
     booking_date = ngay_gio_bat_dau.date()
     _validate_booking_date(booking_date)
-    doctor, _ = _doctor_and_schedule(ma_bac_si)
+    doctor, schedule = _doctor_and_schedule(ma_bac_si)
     department_name = _department_name(doctor["ma_khoa"])
-    slots = gio_con_trong(ma_bac_si, booking_date)
+    with _lock:
+        appointments = deepcopy(_active_for_doctor(ma_bac_si))
+    slots = _slots_for_date(booking_date, schedule, appointments)
     if ngay_gio_bat_dau not in slots:
         raise AppError(
             "KHUNG_GIO_KHONG_CON",
@@ -444,12 +446,18 @@ def doi_lich(
             "DU_LIEU_KHONG_HOP_LE", "Ngày giờ hẹn mới không hợp lệ."
         )
     with _lock:
-        appointment = _get_owned_appointment(ma_lich, "patient", ma_benh_nhan)
+        current = _get_owned_appointment(ma_lich, "patient", ma_benh_nhan)
+        appointment = current.copy()
         now = datetime.now()
-        if appointment["trang_thai"] != "CONFIRMED" or now >= appointment["bat_dau"]:
+        if current["trang_thai"] != "CONFIRMED" or now >= current["bat_dau"]:
             raise AppError(
                 "KHONG_THE_DOI_LICH",
                 "Chỉ có thể đổi lịch đã xác nhận và trước giờ hẹn.",
+            )
+        if ngay_gio_bat_dau_moi == current["bat_dau"]:
+            raise AppError(
+                "KHUNG_GIO_KHONG_CON",
+                "Khung giờ mới phải khác khung giờ hiện tại.",
             )
         new_date = ngay_gio_bat_dau_moi.date()
         _validate_booking_date(new_date)
@@ -461,27 +469,60 @@ def doi_lich(
                 "DA_CO_LICH_TRONG_NGAY",
                 "Bệnh nhân đã có một lịch hẹn đang hoạt động trong ngày này.",
             )
-        slots = gio_con_trong(
-            appointment["ma_bac_si"],
-            new_date,
-            exclude_ma_lich=ma_lich,
+    slots = gio_con_trong(
+        appointment["ma_bac_si"],
+        new_date,
+        exclude_ma_lich=ma_lich,
+    )
+    if ngay_gio_bat_dau_moi not in slots:
+        raise AppError(
+            "KHUNG_GIO_KHONG_CON",
+            "Khung giờ mới không còn trống hoặc ngoài lịch làm việc.",
         )
-        if ngay_gio_bat_dau_moi not in slots:
+
+    with _lock:
+        current = _get_owned_appointment(ma_lich, "patient", ma_benh_nhan)
+        if (
+            current["trang_thai"] != "CONFIRMED"
+            or current["bat_dau"] != appointment["bat_dau"]
+            or datetime.now() >= current["bat_dau"]
+        ):
             raise AppError(
-                "KHUNG_GIO_KHONG_CON",
-                "Khung giờ mới không còn trống hoặc ngoài lịch làm việc.",
+                "KHONG_THE_DOI_LICH",
+                "Lịch hẹn vừa được cập nhật hoặc không còn đủ điều kiện đổi.",
             )
         if datetime.now() >= ngay_gio_bat_dau_moi:
             raise AppError(
                 "KHUNG_GIO_KHONG_CON",
                 "Khung giờ mới đã qua. Hãy tải lại giờ trống.",
             )
-        appointment["bat_dau"] = ngay_gio_bat_dau_moi
-        appointment["ket_thuc"] = ngay_gio_bat_dau_moi + timedelta(
+        if any(
+            row["bat_dau"].date() == new_date
+            for row in _active_for_patient(ma_benh_nhan, ma_lich)
+        ):
+            raise AppError(
+                "DA_CO_LICH_TRONG_NGAY",
+                "Bệnh nhân đã có một lịch hẹn đang hoạt động trong ngày này.",
+            )
+        if any(
+            _overlaps(
+                ngay_gio_bat_dau_moi,
+                ngay_gio_bat_dau_moi + timedelta(minutes=APPOINTMENT_MINUTES),
+                row,
+            )
+            for row in _active_for_doctor(appointment["ma_bac_si"], ma_lich)
+        ):
+            raise AppError(
+                "KHUNG_GIO_KHONG_CON",
+                "Khung giờ vừa được đặt. Hãy tải lại giờ trống.",
+            )
+        now = datetime.now()
+        current["bat_dau"] = ngay_gio_bat_dau_moi
+        current["ket_thuc"] = ngay_gio_bat_dau_moi + timedelta(
             minutes=APPOINTMENT_MINUTES
         )
-        appointment["cap_nhat_luc"] = now
-        return cast(LichHenDTO, appointment.copy())
+        current["cap_nhat_luc"] = now
+        return cast(LichHenDTO, current.copy())
 
 
 def huy_lich(
