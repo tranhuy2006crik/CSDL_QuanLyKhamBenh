@@ -1,16 +1,10 @@
+import calendar
 import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime, time, date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-
-try:
-    from tkcalendar import DateEntry
-
-    HAS_CALENDAR = True
-except ImportError:
-    HAS_CALENDAR = False
 
 from app.contracts import Identifier
 from app.errors import AppError
@@ -44,12 +38,14 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ten_benh_nhan: str,
     ) -> None:
         super().__init__(parent)
+        self.withdraw()
         self.title("Tạo phiếu khám")
         self.geometry("650x520")
         self.update_idletasks()
         x = (self.winfo_screenwidth() - self.winfo_width()) // 2
         y = (self.winfo_screenheight() - self.winfo_height()) // 2
         self.geometry(f"+{x}+{y}")
+        self.deiconify()
         self.minsize(580, 460)
         self.configure(background="#F4F7FA")
         self.transient(parent)
@@ -148,12 +144,14 @@ class XetNghiemDialog(tk.Toplevel):
         row: dict[str, object] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.withdraw()
         self.title("Xét nghiệm")
         self.geometry("620x480")
         self.update_idletasks()
         x = (self.winfo_screenwidth() - self.winfo_width()) // 2
         y = (self.winfo_screenheight() - self.winfo_height()) // 2
         self.geometry(f"+{x}+{y}")
+        self.deiconify()
         self.minsize(520, 420)
         self.configure(background="#F4F7FA")
         self.transient(parent)
@@ -195,10 +193,9 @@ class XetNghiemDialog(tk.Toplevel):
         self.date_picker = ttk.Entry(time_frame, width=12)
         self.date_picker.pack(side="left")
 
-        if HAS_CALENDAR:
-            ttk.Button(
-                time_frame, text="📅", width=3, command=self._open_calendar
-            ).pack(side="left", padx=(2, 6))
+        ttk.Button(time_frame, text="📅", width=3, command=self._open_calendar).pack(
+            side="left", padx=(2, 6)
+        )
 
         ttk.Label(time_frame, text=" Giờ: ").pack(side="left")
         time_options = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 15, 30, 45)]
@@ -245,36 +242,97 @@ class XetNghiemDialog(tk.Toplevel):
         self.name.focus_set()
 
     def _open_calendar(self):
-        """Hàm mở popup cuốn lịch siêu cấp ổn định"""
+        popup = tk.Toplevel(self)
+        popup.withdraw()
+        popup.title("Chọn ngày")
+        popup.resizable(False, False)
+        popup.columnconfigure(0, weight=1)
+
+        popup.update_idletasks()
+        x = self.winfo_rootx() + 80
+        y = self.winfo_rooty() + 80
+        popup.geometry(f"+{x}+{y}")
+        popup.deiconify()
+
+        popup.transient(self)
+        popup.grab_set()
+
+        current_date_str = self.date_picker.get().strip()
         try:
-            from tkcalendar import Calendar
-        except ImportError:
-            return
+            current_date = datetime.strptime(current_date_str, "%d/%m/%Y").date()
+        except ValueError:
+            current_date = date.today()
 
-        top = tk.Toplevel(self)
-        top.title("Chọn ngày")
-        top.geometry("+%d+%d" % (self.winfo_rootx() + 80, self.winfo_rooty() + 80))
-        top.transient(self)
-        top.grab_set()
+        month_state = {"year": current_date.year, "month": current_date.month}
 
-        cal = Calendar(top, selectmode="day", date_pattern="dd/mm/yyyy")
-        cal.pack(padx=10, pady=10)
+        header = ttk.Frame(popup, padding=(10, 10, 10, 4))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        calendar_body = ttk.Frame(popup, padding=(10, 4, 10, 10))
+        calendar_body.grid(row=1, column=0, sticky="nsew")
 
-        current_date = self.date_picker.get().strip()
-        if current_date:
-            try:
-                dt = datetime.strptime(current_date, "%d/%m/%Y").date()
-                cal.selection_set(dt)
-            except ValueError:
-                pass
+        def move_month(offset: int) -> None:
+            year, month_number = month_state["year"], month_state["month"] + offset
+            if month_number < 1:
+                year -= 1
+                month_number = 12
+            elif month_number > 12:
+                year += 1
+                month_number = 1
+            if not 1 <= year <= 9999:
+                return
+            month_state.update(year=year, month=month_number)
+            render()
 
-        def on_date_selected(e):
+        def select_day(day: int) -> None:
             self.date_picker.delete(0, "end")
-            dt_obj = cal.selection_get()
-            self.date_picker.insert(0, dt_obj.strftime("%d/%m/%Y"))
-            top.destroy()
+            selected_date = date(month_state["year"], month_state["month"], day)
+            self.date_picker.insert(0, selected_date.strftime("%d/%m/%Y"))
+            popup.destroy()
 
-        cal.bind("<<CalendarSelected>>", on_date_selected)
+        def render() -> None:
+            for child in header.winfo_children():
+                child.destroy()
+            for child in calendar_body.winfo_children():
+                child.destroy()
+
+            current_month = date(month_state["year"], month_state["month"], 1)
+
+            ttk.Button(header, text="‹", width=3, command=lambda: move_month(-1)).grid(
+                row=0, column=0
+            )
+            ttk.Label(
+                header,
+                text=current_month.strftime("%m/%Y"),
+                font=("Segoe UI", 10, "bold"),
+                anchor="center",
+            ).grid(row=0, column=1, sticky="ew", padx=8)
+            ttk.Button(header, text="›", width=3, command=lambda: move_month(1)).grid(
+                row=0, column=2
+            )
+
+            for col_idx, weekday in enumerate(
+                ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
+            ):
+                ttk.Label(calendar_body, text=weekday, width=4, anchor="center").grid(
+                    row=0, column=col_idx, pady=(0, 4)
+                )
+
+            for row_index, week in enumerate(
+                calendar.monthcalendar(month_state["year"], month_state["month"]),
+                start=1,
+            ):
+                for col_idx, day in enumerate(week):
+                    if day == 0:
+                        continue
+                    ttk.Button(
+                        calendar_body,
+                        text=str(day),
+                        width=4,
+                        command=lambda d=day: select_day(d),
+                    ).grid(row=row_index, column=col_idx, padx=1, pady=1)
+
+        render()
 
     def _set_default_time(self):
         now = datetime.now()
@@ -358,13 +416,14 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         on_changed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.withdraw()
         self.title(f"Chi tiết phiếu khám {ma_phieu}")
-
         self.geometry("1024x720")
         self.update_idletasks()
         x = (self.winfo_screenwidth() - self.winfo_width()) // 2
         y = (self.winfo_screenheight() - self.winfo_height()) // 2
         self.geometry(f"+{x}+{y}")
+        self.deiconify()
         self.minsize(950, 650)
         self.configure(background="#F4F7FA")
         self.transient(parent)
@@ -839,15 +898,17 @@ class PhieuKhamDetailDialog(tk.Toplevel):
 
     def _open_prescription(self) -> None:
         dialog = tk.Toplevel(self)
+        dialog.withdraw()
         dialog.title(f"Kê đơn thuốc — Phiếu khám {self.ma_phieu}")
         dialog.geometry("1180x700")
         dialog.update_idletasks()
-        x = (self.winfo_screenwidth() - self.winfo_width()) // 2
-        y = (self.winfo_screenheight() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
-        self.minsize(1000, 580)
-        self.configure(background="#F4F7FA")
-        self.transient(self)
+        x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+        y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+        dialog.deiconify()
+        dialog.minsize(1000, 580)
+        dialog.configure(background="#F4F7FA")
+        dialog.transient(self)
         form = KeDonView(dialog, ma_phieu=self.ma_phieu)
         form.pack(fill="both", expand=True)
         dialog.protocol("WM_DELETE_WINDOW", lambda: form.request_close(dialog.destroy))
