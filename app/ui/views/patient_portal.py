@@ -104,7 +104,7 @@ class PatientHistoryView(ttk.Frame):
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
         summary = ttk.Frame(self, padding=(4, 8, 4, 12))
         summary.grid(row=1, column=0, sticky="ew")
-        for column, weight in enumerate((5, 2, 3)):
+        for column, weight in enumerate((5, 5)):
             summary.columnconfigure(column, weight=weight)
 
         history_group = ttk.Frame(summary)
@@ -124,7 +124,7 @@ class PatientHistoryView(ttk.Frame):
         self.medical_history.pack(anchor="w", fill="x")
 
         visits_group = ttk.Frame(summary)
-        visits_group.grid(row=0, column=1, sticky="nsew", padx=(12, 18))
+        visits_group.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         ttk.Label(
             visits_group,
             text="TỔNG SỐ LẦN KHÁM",
@@ -136,21 +136,6 @@ class PatientHistoryView(ttk.Frame):
         )
         self.visit_count.pack(anchor="w")
 
-        cost_group = ttk.Frame(summary)
-        cost_group.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
-        ttk.Label(
-            cost_group,
-            text="TỔNG CHI PHÍ GHI NHẬN",
-            style="SummaryHeading.TLabel",
-            wraplength=210,
-        ).pack(anchor="w", pady=(0, 4))
-        self.total_cost = ttk.Label(
-            cost_group,
-            text=dinh_dang_tien(0),
-            style="SummaryValue.TLabel",
-        )
-        self.total_cost.pack(anchor="w")
-
         table_frame = ttk.Frame(self)
         table_frame.grid(row=2, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
@@ -161,7 +146,6 @@ class PatientHistoryView(ttk.Frame):
             "ngay_gio",
             "bac_si",
             "khoa",
-            "tong_chi_phi",
         )
         self.table = tao_bang(
             table_frame,
@@ -172,15 +156,13 @@ class PatientHistoryView(ttk.Frame):
                 "ngay_gio": "Ngày giờ khám",
                 "bac_si": "Bác sĩ",
                 "khoa": "Khoa",
-                "tong_chi_phi": "Tổng chi phí ghi nhận",
             },
             {
                 "stt": 55,
                 "ma_phieu": 100,
                 "ngay_gio": 165,
-                "bac_si": 190,
-                "khoa": 155,
-                "tong_chi_phi": 190,
+                "bac_si": 250,
+                "khoa": 200,
             },
         )
         self.table.grid(row=0, column=0, sticky="nsew")
@@ -198,11 +180,9 @@ class PatientHistoryView(ttk.Frame):
             text="Xem chi tiết",
             command=self._open_selected,
         ).pack(side="left")
-        ttk.Button(actions, text="Tải lại", command=self._refresh).pack(side="left", padx=8)
-        ttk.Label(
-            actions,
-            text="Chỉ xem; chi phí là giá trị ghi nhận, không thể hiện trạng thái thanh toán.",
-        ).pack(side="right")
+        ttk.Button(actions, text="Tải lại", command=self._refresh).pack(
+            side="left", padx=8
+        )
         self._refresh()
 
     def _refresh(self) -> None:
@@ -214,9 +194,8 @@ class PatientHistoryView(ttk.Frame):
             return
         for item in self.table.get_children():
             self.table.delete(item)
-        total = Decimal("0")
+
         for index, row in enumerate(rows, start=1):
-            total += Decimal(str(row["tong_chi_phi"] or 0))
             self.table.insert(
                 "",
                 "end",
@@ -227,11 +206,9 @@ class PatientHistoryView(ttk.Frame):
                     row["ngay_gio_kham"].strftime("%d/%m/%Y %H:%M"),
                     row["ten_bac_si"],
                     row["ten_khoa"],
-                    dinh_dang_tien(row["tong_chi_phi"]),
                 ),
             )
         self.visit_count.configure(text=str(len(rows)))
-        self.total_cost.configure(text=dinh_dang_tien(total))
         self.medical_history.configure(text=medical_history or "Chưa ghi nhận.")
 
     def _open_selected(self, _event: tk.Event | None = None) -> None:

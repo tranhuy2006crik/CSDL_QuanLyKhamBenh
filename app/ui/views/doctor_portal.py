@@ -495,7 +495,6 @@ class PatientHistoryViewEmbedded(ttk.Frame):
             "khoa",
             "chan_doan",
             "trang_thai",
-            "tong",
         )
         self.table = tao_bang(
             table_frame,
@@ -507,16 +506,14 @@ class PatientHistoryViewEmbedded(ttk.Frame):
                 "khoa": "Khoa",
                 "chan_doan": "Chẩn đoán",
                 "trang_thai": "Trạng thái",
-                "tong": "Tổng chi phí",
             },
             {
                 "ma_phieu": 80,
                 "ngay_gio": 140,
-                "bac_si": 150,
-                "khoa": 110,
-                "chan_doan": 180,
-                "trang_thai": 110,
-                "tong": 120,
+                "bac_si": 160,
+                "khoa": 130,
+                "chan_doan": 250,
+                "trang_thai": 120,
             },
         )
 
@@ -526,7 +523,6 @@ class PatientHistoryViewEmbedded(ttk.Frame):
         self.table.column("khoa", anchor="center")
         self.table.column("chan_doan", anchor="w")
         self.table.column("trang_thai", anchor="center")
-        self.table.column("tong", anchor="e")
 
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
@@ -591,7 +587,6 @@ class PatientHistoryViewEmbedded(ttk.Frame):
                     visit["ten_khoa"],
                     visit["chan_doan"] or "—",
                     text_status,
-                    dinh_dang_tien(visit["tong_chi_phi"]),
                 ),
             )
 
