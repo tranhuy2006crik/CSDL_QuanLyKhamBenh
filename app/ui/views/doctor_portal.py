@@ -1,10 +1,12 @@
 import calendar
+import os
 import re
+import tempfile
 import tkinter as tk
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 from collections.abc import Callable
 
 from app.contracts import BaoCaoBacSiRow, BacSiDTO, BenhNhanDTO, Identifier
@@ -18,7 +20,12 @@ from app.services.clinic_service import (
     tim_phieu_dang_kham,
     tim_kiem_benh_nhan,
 )
-from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
+from app.ui.views.common import (
+    dinh_dang_tien,
+    hien_loi,
+    mo_pdf_tren_trinh_duyet,
+    tao_bang,
+)
 from app.ui.views.appointment_views import DoctorAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
 
@@ -771,12 +778,13 @@ class DoctorReportView(ttk.Frame):
             footer,
             text="Chi phí ghi nhận = giá khám áp dụng + xét nghiệm + thuốc; không phản ánh thanh toán.",
         ).pack(side="left")
-        ttk.Button(
+        self.preview_button = ttk.Button(
             footer,
-            text="Xuất báo cáo PDF",
-            command=self._export_pdf,
+            text="In báo cáo",
+            command=self._preview_report,
             style="Info.TButton",
-        ).pack(side="right")
+        )
+        self.preview_button.pack(side="right")
         self.rows: list[BaoCaoBacSiRow] = []
         self.loaded_period: tuple[int, int] | None = None
         self._refresh()
@@ -944,7 +952,7 @@ class DoctorReportView(ttk.Frame):
         )
         self._draw_chart()
 
-    def _export_pdf(self) -> None:
+    def _preview_report(self) -> None:
         try:
             month, year = self._selected_period()
         except Exception as error:
@@ -956,28 +964,22 @@ class DoctorReportView(ttk.Frame):
                 return
         if not self.rows:
             messagebox.showinfo(
-                "Xuất báo cáo", "Không có dữ liệu để xuất.", parent=self
+                "Xem báo cáo", "Không có dữ liệu để xem.", parent=self
             )
             return
-        path_text = filedialog.asksaveasfilename(
-            parent=self,
-            title="Lưu báo cáo bác sĩ",
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
-            initialfile=f"bao_cao_bac_si_{self.year.get()}_{self.month.get()}.pdf",
-        )
-        if not path_text:
-            return
         try:
+            fd, path_text = tempfile.mkstemp(
+                suffix=".pdf",
+                prefix=f"BaoCaoBacSi_{year}_{month:02d}_",
+            )
+            os.close(fd)
+            path = Path(path_text)
             xuat_bao_cao_bac_si_pdf(
-                Path(path_text),
+                path,
                 month,
                 year,
                 self.rows,
             )
+            mo_pdf_tren_trinh_duyet(path)
         except Exception as error:
-            hien_loi(self, error, "Không thể xuất báo cáo")
-            return
-        messagebox.showinfo(
-            "Đã xuất báo cáo", f"Đã lưu báo cáo tại:\n{path_text}", parent=self
-        )
+            hien_loi(self, error, "Không thể mở báo cáo")

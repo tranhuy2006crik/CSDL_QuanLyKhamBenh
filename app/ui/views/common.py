@@ -1,5 +1,9 @@
+import os
 import logging
+import subprocess
+import sys
 from decimal import Decimal
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
@@ -7,6 +11,15 @@ from typing import Callable
 from app.errors import AppError
 
 logger = logging.getLogger(__name__)
+
+
+def mo_pdf_tren_trinh_duyet(path: Path) -> None:
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(path)], check=True)
+    else:
+        subprocess.run(["xdg-open", str(path)], check=True)
 
 
 def dinh_dang_tien(value: object) -> str:

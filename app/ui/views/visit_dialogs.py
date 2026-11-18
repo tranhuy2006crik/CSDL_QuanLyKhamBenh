@@ -1,8 +1,6 @@
 import calendar
 import re
 import os
-import sys
-import subprocess
 import tempfile
 import tkinter as tk
 from collections.abc import Callable
@@ -30,6 +28,7 @@ from app.ui.ke_don import KeDonView
 from app.ui.views.common import (
     dinh_dang_tien,
     hien_loi,
+    mo_pdf_tren_trinh_duyet,
     tao_bang,
     xac_nhan_thay_doi_chua_luu,
 )
@@ -182,18 +181,6 @@ class TaoPhieuKhamDialog(tk.Toplevel):
             return
         self.result = ma_phieu
         self.destroy()
-
-
-def _open_pdf_preview(path: Path) -> None:
-    try:
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.run(["open", str(path)], check=True)
-        else:
-            subprocess.run(["xdg-open", str(path)], check=True)
-    except Exception as e:
-        print(f"Không thể tự động mở PDF: {e}")
 
 
 class XetNghiemDialog(tk.Toplevel):
@@ -943,7 +930,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             path = Path(path_text)
             report = bao_cao_chi_tiet_phieu(self.ma_phieu)
             xuat_bao_cao_phieu_kham_pdf(path, report)
-            _open_pdf_preview(path)
+            mo_pdf_tren_trinh_duyet(path)
         except Exception as error:
             hien_loi(self, error, "Không thể tải trước phiếu khám")
 
@@ -961,7 +948,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 report["thong_tin"]["gioi_tinh"] = {"NAM": "Nam", "NU": "Nữ", "KHAC": "Khác"}.get(raw_g, raw_g or "—")
 
             xuat_hoa_don_pdf(path, report)
-            _open_pdf_preview(path)
+            mo_pdf_tren_trinh_duyet(path)
         except Exception as error:
             hien_loi(self, error, "Không thể tải trước hóa đơn")
 

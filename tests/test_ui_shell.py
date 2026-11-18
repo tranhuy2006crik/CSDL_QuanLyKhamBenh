@@ -1,6 +1,7 @@
 import unittest
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
 from unittest.mock import patch
@@ -186,6 +187,32 @@ class ClinicShellTests(unittest.TestCase):
                     )
                 ]
                 self.assertTrue(horizontal_bars)
+                self.assertEqual(
+                    report.preview_button.cget("text"), "Xem trước / In báo cáo"
+                )
+                self.assertEqual(report.loaded_period, report._selected_period())
+                with (
+                    patch(
+                        "app.ui.views.doctor_portal.tempfile.mkstemp",
+                        return_value=(123, "bao_cao.pdf"),
+                    ),
+                    patch("app.ui.views.doctor_portal.os.close") as close_file,
+                    patch(
+                        "app.ui.views.doctor_portal.xuat_bao_cao_bac_si_pdf"
+                    ) as export_pdf,
+                    patch(
+                        "app.ui.views.doctor_portal.mo_pdf_tren_trinh_duyet"
+                    ) as open_pdf,
+                ):
+                    report._preview_report()
+
+                close_file.assert_called_once_with(123)
+                export_pdf.assert_called_once_with(
+                    Path("bao_cao.pdf"),
+                    *report.loaded_period,
+                    report.rows,
+                )
+                open_pdf.assert_called_once_with(Path("bao_cao.pdf"))
                 portal.destroy()
         finally:
             app.destroy()
