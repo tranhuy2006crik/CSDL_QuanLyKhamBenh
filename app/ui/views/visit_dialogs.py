@@ -26,6 +26,7 @@ from app.services.tra_cuu_service import (
 )
 from app.ui.ke_don import KeDonView
 from app.ui.views.common import (
+    PdfPreviewDialog,
     dinh_dang_tien,
     hien_loi,
     mo_pdf_tren_trinh_duyet,
@@ -92,9 +93,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
                 row=1, column=0, sticky="w", pady=(8, 0)
             )
             self.ma_ho_so = ttk.Entry(fields)
-            self.ma_ho_so.grid(
-                row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0)
-            )
+            self.ma_ho_so.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
 
         ttk.Label(self, text="Triệu chứng").grid(
             row=3, column=0, sticky="w", padx=12, pady=(10, 4)
@@ -131,9 +130,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
             actions,
             text="Tiếp nhận lịch" if ma_lich_hen else "Tạo phiếu khám",
             command=self._save,
-        ).pack(
-            side="right", padx=(0, 8)
-        )
+        ).pack(side="right", padx=(0, 8))
         self.grab_set()
         self.ma_phieu.focus_set()
 
@@ -618,7 +615,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
 
         self.export_button = ttk.Button(
             actions,
-            text="In Phiếu khám",
+            text="Xem Phiếu khám",
             command=self._export_report,
             style="Info.TButton",
         )
@@ -626,7 +623,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
 
         self.export_invoice_button = ttk.Button(
             actions,
-            text="Xuất Phiếu thu / Hóa đơn",
+            text="Xem Phiếu thu",
             command=self._export_invoice,
             style="Info.TButton",
         )
@@ -930,14 +927,22 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             path = Path(path_text)
             report = bao_cao_chi_tiet_phieu(self.ma_phieu)
             xuat_bao_cao_phieu_kham_pdf(path, report)
-            mo_pdf_tren_trinh_duyet(path)
+            PdfPreviewDialog(
+                self.winfo_toplevel(),
+                path,
+                f"ket_qua_kham_{self.ma_phieu}.pdf",
+                title=f"Phiếu khám bệnh — {self.ma_phieu}",
+            )
         except Exception as error:
             hien_loi(self, error, "Không thể tải trước phiếu khám")
 
     def _export_invoice(self) -> None:
         try:
             from app.pdf_export import xuat_hoa_don_pdf
-            fd, path_text = tempfile.mkstemp(suffix=".pdf", prefix=f"HoaDon_{self.ma_phieu}_")
+
+            fd, path_text = tempfile.mkstemp(
+                suffix=".pdf", prefix=f"HoaDon_{self.ma_phieu}_"
+            )
             os.close(fd)
             path = Path(path_text)
             report = bao_cao_chi_tiet_phieu(self.ma_phieu)
@@ -945,10 +950,19 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             patient = lay_benh_nhan(report["thong_tin"]["ma_benh_nhan"])
             if patient:
                 raw_g = (patient.get("gioi_tinh") or "").upper()
-                report["thong_tin"]["gioi_tinh"] = {"NAM": "Nam", "NU": "Nữ", "KHAC": "Khác"}.get(raw_g, raw_g or "—")
+                report["thong_tin"]["gioi_tinh"] = {
+                    "NAM": "Nam",
+                    "NU": "Nữ",
+                    "KHAC": "Khác",
+                }.get(raw_g, raw_g or "—")
 
             xuat_hoa_don_pdf(path, report)
-            mo_pdf_tren_trinh_duyet(path)
+            PdfPreviewDialog(
+                self.winfo_toplevel(),
+                path,
+                f"phieu_thu_{self.ma_phieu}.pdf",
+                title=f"Phiếu thu / Hóa đơn — {self.ma_phieu}",
+            )
         except Exception as error:
             hien_loi(self, error, "Không thể tải trước hóa đơn")
 

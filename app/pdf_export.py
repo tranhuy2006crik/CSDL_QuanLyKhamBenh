@@ -721,7 +721,7 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
         [
             Paragraph(f"<b>Mã BN:</b> {escape(str(info['ma_benh_nhan']))}", body),
             Paragraph(
-                f"<b>Tuổi/NS:</b> {escape(_format_value(info['ns_str'] if 'ns_str' in info else info['ngay_sinh'], 'date'))}",
+                f"<b>Ngày Sinh:</b> {escape(_format_value(info['ns_str'] if 'ns_str' in info else info['ngay_sinh'], 'date'))}",
                 body,
             ),
         ],
@@ -785,9 +785,12 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
         ]
     ]
 
-    # 1. Thuốc
+    muc_stt = 1
+
     if report["ds_thuoc"]:
-        table_data.append([Paragraph("<b>1. Thuốc</b>", body_bold), "", "", "", ""])
+        table_data.append(
+            [Paragraph(f"<b>{muc_stt}. Thuốc</b>", body_bold), "", "", "", ""]
+        )
         for row in report["ds_thuoc"]:
             table_data.append(
                 [
@@ -813,9 +816,9 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
                 ),
             ]
         )
+        muc_stt += 1  
 
-    # 2. Khám
-    table_data.append([Paragraph("<b>2. Khám</b>", body_bold), "", "", "", ""])
+    table_data.append([Paragraph(f"<b>{muc_stt}. Khám</b>", body_bold), "", "", "", ""])
     table_data.append(
         [
             cp("- Công khám bệnh", "left"),
@@ -834,11 +837,11 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
             cp(_format_money(costs.get("gia_kham", 0)).replace(" VNĐ", ""), "right"),
         ]
     )
+    muc_stt += 1  
 
-    # 3. Xét nghiệm
     if report["ds_xet_nghiem"]:
         table_data.append(
-            [Paragraph("<b>3. Xét nghiệm</b>", body_bold), "", "", "", ""]
+            [Paragraph(f"<b>{muc_stt}. Xét nghiệm</b>", body_bold), "", "", "", ""]
         )
         for row in report["ds_xet_nghiem"]:
             table_data.append(
@@ -868,8 +871,8 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
                 ),
             ]
         )
+        muc_stt += 1
 
-    # Tổng cộng
     table_data.append(
         [
             Paragraph("<b>TỔNG TIỀN THANH TOÁN :</b>", body_bold),
@@ -889,7 +892,7 @@ def xuat_hoa_don_pdf(duong_dan: Path, report: dict[str, Any]) -> Path:
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C5D1")),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF4")),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("SPAN", (0, -1), (3, -1)),  # Merge cells for Total row
+                ("SPAN", (0, -1), (3, -1)),
                 ("ALIGN", (0, -1), (3, -1), "RIGHT"),
             ]
         )
