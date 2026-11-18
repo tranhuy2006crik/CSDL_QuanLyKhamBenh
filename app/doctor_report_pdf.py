@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 from xml.sax.saxutils import escape
 
-from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -11,7 +10,6 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
-    KeepTogether,
     LongTable,
     Paragraph,
     SimpleDocTemplate,
@@ -28,146 +26,6 @@ def _decimal(row: Mapping[str, Any], key: str) -> Decimal:
     if not value.is_finite():
         raise ValueError(f"Giá trị không hợp lệ cho {key}: {value!r}")
     return value
-
-
-def _build_horizontal_bar_charts(
-    rows: Sequence[Mapping[str, Any]], width: float
-) -> list[Drawing]:
-    sorted_rows = sorted(
-        rows,
-        key=lambda row: _decimal(row, "tong_gia_tri"),
-        reverse=True,
-    )
-    max_visits = max(
-        (int(row["so_luot_kham"] or 0) for row in sorted_rows), default=0
-    )
-    max_value = max(
-        (_decimal(row, "tong_gia_tri") for row in sorted_rows),
-        default=Decimal("0"),
-    )
-    visit_color = colors.HexColor("#168AAD")
-    value_color = colors.HexColor("#E58A2B")
-    label_width, value_width = 140, 96
-    bar_width = max(1, width - label_width - value_width - 12)
-    header_height, row_height, rows_per_chart = 36, 28, 4
-    charts: list[Drawing] = []
-
-    for offset in range(0, len(sorted_rows), rows_per_chart):
-        chart_rows = sorted_rows[offset : offset + rows_per_chart]
-        chart_header_height = header_height if offset == 0 else 0
-        height = chart_header_height + len(chart_rows) * row_height
-        chart = Drawing(width, height)
-        if offset == 0:
-            chart.add(
-                Rect(0, height - 11, 8, 8, fillColor=visit_color, strokeColor=None)
-            )
-            chart.add(
-                String(
-                    12,
-                    height - 9,
-                    f"Số lượt khám (tối đa: {max_visits})",
-                    fontName="NotoSans",
-                    fontSize=8,
-                    fillColor=colors.HexColor("#111827"),
-                )
-            )
-            chart.add(
-                Rect(0, height - 25, 8, 8, fillColor=value_color, strokeColor=None)
-            )
-            chart.add(
-                String(
-                    12,
-                    height - 23,
-                    f"Tổng giá trị ghi nhận (tối đa: {_format_money(max_value)})",
-                    fontName="NotoSans",
-                    fontSize=8,
-                    fillColor=colors.HexColor("#111827"),
-                )
-            )
-
-        for index, row in enumerate(chart_rows):
-            top = height - chart_header_height - index * row_height
-            visits = int(row["so_luot_kham"] or 0)
-            amount = _decimal(row, "tong_gia_tri")
-            name = str(row["ten_bac_si"])
-            if len(name) > 31:
-                name = name[:28] + "..."
-            chart.add(
-                String(
-                    0,
-                    top - 11,
-                    name,
-                    fontName="NotoSans",
-                    fontSize=8,
-                    fillColor=colors.HexColor("#111827"),
-                )
-            )
-            for value, maximum, color, y, label in (
-                (
-                    Decimal(visits),
-                    Decimal(max_visits),
-                    visit_color,
-                    top - 9,
-                    str(visits),
-                ),
-                (
-                    amount,
-                    max_value,
-                    value_color,
-                    top - 19,
-                    _format_money(amount),
-                ),
-            ):
-                chart.add(
-                    Rect(
-                        label_width,
-                        y,
-                        bar_width,
-                        5,
-                        fillColor=colors.HexColor("#E2E8F0"),
-                        strokeColor=None,
-                    )
-                )
-                scaled_width = (
-                    max(1, bar_width * float(value / maximum))
-                    if value > 0 and maximum > 0
-                    else 0
-                )
-                if scaled_width:
-                    chart.add(
-                        Rect(
-                            label_width,
-                            y,
-                            scaled_width,
-                            5,
-                            fillColor=color,
-                            strokeColor=None,
-                        )
-                    )
-                chart.add(
-                    String(
-                        width - 2,
-                        y - 1,
-                        label,
-                        fontName="NotoSans",
-                        fontSize=8,
-                        fillColor=colors.HexColor("#111827"),
-                        textAnchor="end",
-                    )
-                )
-            if index < len(chart_rows) - 1:
-                chart.add(
-                    Rect(
-                        0,
-                        top - row_height + 2,
-                        width,
-                        0.35,
-                        fillColor=colors.HexColor("#E2E8F0"),
-                        strokeColor=None,
-                    )
-                )
-        charts.append(chart)
-    return charts
 
 
 def xuat_bao_cao_bac_si_pdf(
@@ -247,6 +105,14 @@ def xuat_bao_cao_bac_si_pdf(
         fontSize=14,
         leading=17,
     )
+    period_style = ParagraphStyle(
+        "DoctorReportPeriod",
+        parent=summary_style,
+        fontSize=15,
+        leading=19,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#1D4ED8"),
+    )
     header_style = ParagraphStyle(
         "DoctorReportHeader",
         parent=body_style,
@@ -288,8 +154,6 @@ def xuat_bao_cao_bac_si_pdf(
             ]
         )
     )
-
-    charts = _build_horizontal_bar_charts(rows, page_width)
 
     detail_columns = [
         ("Mã bác sĩ", "ma_bac_si", "text"),
@@ -340,31 +204,29 @@ def xuat_bao_cao_bac_si_pdf(
         )
     )
 
+    period_banner = Table(
+        [[Paragraph(f"Kỳ báo cáo: Tháng {thang}/{nam}", period_style)]],
+        colWidths=[page_width],
+    )
+    period_banner.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EFF6FF")),
+                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#93C5FD")),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
+
     story: list[Any] = [
         _build_pdf_header(),
         Spacer(1, 3 * mm),
         Paragraph("BÁO CÁO KHÁM THEO BÁC SĨ", title_style),
-        Paragraph(f"Kỳ báo cáo: Tháng {thang}/{nam}", body_style),
+        period_banner,
         Spacer(1, 3 * mm),
         summary,
     ]
-    if charts:
-        story.append(
-            KeepTogether(
-                [
-                    Paragraph("Biểu đồ thể hiện số lượt khám và doanh thu của bác sĩ theo tháng", section_style),
-                    charts[0],
-                ]
-            )
-        )
-        story.extend(charts[1:])
-    else:
-        story.extend(
-            [
-                Paragraph("Biểu đồ cột ghép theo toàn bộ bác sĩ", section_style),
-                Paragraph("Không có dữ liệu cho kỳ báo cáo.", body_style),
-            ]
-        )
     story.extend([Paragraph("Chi tiết báo cáo", section_style), details])
 
     def draw_page_number(canvas: Canvas, _document: SimpleDocTemplate) -> None:

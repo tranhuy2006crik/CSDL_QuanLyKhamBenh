@@ -1,11 +1,11 @@
--- test_sql02.sql - KIEM THU SQL-02 (TIM KIEM + THONG KE)
--- Tuong thich 01_schema(7).sql / 02_triggers(2).sql / 03_business_logic(2).sql.
--- File API 04_search_statistics.sql dung %s cho Python; MySQL PREPARE ben duoi dung ?.
--- Yeu cau: database quanlykhambenh MOI, da nap DDL, triggers va seed.sql.
+-- test_sql02.sql - KIEM THU TIM KIEM BENH NHAN, THONG KE, LICH BAC SI, LICH HEN.
+-- Tuong thich voi bo SQL v5.3: 01_schema / 02_triggers / 03_business_logic / 04_search_statistics.
+-- Truy van Python dung %s; cac PREPARE trong file nay dung ? cho MySQL Workbench.
+-- STTXetNghiem la CHAR(2), nhap tay bang chuoi; CHECK chi chap nhan '01'..'99'.
+-- Yeu cau: database quanlykhambenh moi, da nap DDL, triggers va seed.sql v5.3.
 -- CHI CHAY TREN CSDL THU NGHIEM, KHONG CHAY TREN CSDL CO DU LIEU THAT.
--- Script tu tao 5 phieu kham/du lieu lien quan va ROLLBACK sau khi kiem tra.
--- KHONG GIU LAI bat ky du lieu phat sinh hay thay doi ton kho nao sau ROLLBACK.
--- Cac truy van PREPARE duoi day duoc lay nguyen logic tu 04_search_statistics.sql.
+-- Script tao 7 phieu kham va 1 lich hen kiem thu; ROLLBACK cac thay doi cuoi file.
+-- KHONG GIU LAI du lieu phat sinh hoac thay doi ton kho sau ROLLBACK.
 
 SET NAMES utf8mb4;
 USE quanlykhambenh;
@@ -17,86 +17,137 @@ FROM PhieuKhamBenh;
 
 START TRANSACTION;
 
--- 1. TEST_PK901: BS001 / BN001, 2 xet nghiem, 3 loai thuoc, HOAN_THANH.
+-- 0. KIEM THU DAT LICH VA DONG BO KHI PHIEU KHAM HOAN THANH
+-- Chon ngay hen sau it nhat 31 ngay, vao ngay BS001 co lich lam viec.
+-- Thoi diem nay tranh qua khu va khong lam thay doi cac ca thong ke 10-11/2026.
+SET @BaseHenTest = DATE_ADD(CURRENT_DATE(), INTERVAL 30 DAY);
+SET @ThuBaseHenTest = IF(DAYOFWEEK(@BaseHenTest) = 1, 8, DAYOFWEEK(@BaseHenTest));
+SET @NgayHenTest = (
+    SELECT DATE_ADD(@BaseHenTest, INTERVAL (MOD(llv.Thu - @ThuBaseHenTest + 6, 7) + 1) DAY)
+    FROM LichLamViecBacSi llv
+    WHERE llv.MaBacSi = 'BS001'
+    ORDER BY MOD(llv.Thu - @ThuBaseHenTest + 6, 7) + 1, llv.GioBatDau
+    LIMIT 1
+);
+SET @GioHenTest = '08:30:00';
+SET @NgayGioHenTest = TIMESTAMP(@NgayHenTest, @GioHenTest);
+
+INSERT INTO LichHen (MaLichHen, MaBacSi, MaBenhNhan, NgayHen, GioBatDau, TrangThai)
+VALUES ('LH901', 'BS001', 'BN002', @NgayHenTest, @GioHenTest, 'CHO_KHAM');
+
+-- Tiep nhan tao phieu DANG_KHAM; lich hen van phai o CHO_KHAM.
+INSERT INTO PhieuKhamBenh
+    (MaPhieuKhamBenh, MaBacSi, MaHoSo, MaLichHen, NgayGioKham, ChanDoan,
+     TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
+VALUES ('PK907', 'BS001', 'HS002', 'LH901', @NgayGioHenTest,
+        'Kiem tra dong bo lich hen', 'Tai kham', 150000, 'DANG_KHAM');
+SELECT '0a: phieu DANG_KHAM -> lich van CHO_KHAM' AS CaKiemThu,
+       TrangThai AS TrangThaiThucTe,
+       CASE WHEN TrangThai = 'CHO_KHAM' THEN 'DAT' ELSE 'SAI' END AS KiemTra
+FROM LichHen WHERE MaLichHen = 'LH901';
+
+-- Chot phieu (6.1) va dong bo lich (6.2) trong cung transaction nhu API cua Duc.
+UPDATE PhieuKhamBenh
+SET TrangThaiPhieuKham = 'HOAN_THANH'
+WHERE MaPhieuKhamBenh = 'PK907'
+  AND TrangThaiPhieuKham = 'DANG_KHAM'
+  AND ChanDoan IS NOT NULL AND TRIM(ChanDoan) <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM XetNghiem
+      WHERE MaPhieuKhamBenh = 'PK907'
+        AND (KetQuaXetNghiem IS NULL OR TRIM(KetQuaXetNghiem) = '')
+  );
+UPDATE LichHen lh
+JOIN PhieuKhamBenh pk ON lh.MaLichHen = pk.MaLichHen
+SET lh.TrangThai = 'DA_KHAM'
+WHERE pk.MaPhieuKhamBenh = 'PK907'
+  AND pk.TrangThaiPhieuKham = 'HOAN_THANH'
+  AND lh.TrangThai = 'CHO_KHAM';
+SELECT '0b: phieu HOAN_THANH -> lich DA_KHAM' AS CaKiemThu,
+       TrangThai AS TrangThaiThucTe,
+       CASE WHEN TrangThai = 'DA_KHAM' THEN 'DAT' ELSE 'SAI' END AS KiemTra
+FROM LichHen WHERE MaLichHen = 'LH901';
+
+-- 1. PK901: BS001 / BN001, 2 xet nghiem, 3 loai thuoc, HOAN_THANH.
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK901', 'BS001', 'HS001', '2026-10-05 08:00:00',
+VALUES ('PK901', 'BS001', 'HS001', '2026-10-05 08:00:00',
         'Viem hong', 'Dau hong', 150000, 'DANG_KHAM');
 INSERT INTO XetNghiem
     (MaPhieuKhamBenh, STTXetNghiem, TenXetNghiem, KetQuaXetNghiem, NgayGioThucHien, DonGiaApDung)
 VALUES
-    ('TEST_PK901', 1, 'Cong thuc mau', 'Binh thuong', '2026-10-05 08:30:00', 50000),
-    ('TEST_PK901', 2, 'Duong huyet', 'Binh thuong', '2026-10-05 08:40:00', 70000);
+    ('PK901', '01', 'Cong thuc mau', 'Binh thuong', '2026-10-05 08:30:00', 50000),
+    ('PK901', '02', 'Duong huyet', 'Binh thuong', '2026-10-05 08:40:00', 70000);
 INSERT INTO DonThuoc (MaDonThuoc, MaPhieuKhamBenh, NgayLapDonThuoc, LoiDanChung)
-VALUES ('TEST_DT901', 'TEST_PK901', '2026-10-05', 'Theo doi tai nha');
+VALUES ('DT901', 'PK901', '2026-10-05', 'Theo doi tai nha');
 -- Gia thuoc lay dung bang Thuoc trong seed.sql, co tru ton kho.
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 2 WHERE MaThuoc = 'T001' AND SoLuongCoSan >= 2;
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 3 WHERE MaThuoc = 'T002' AND SoLuongCoSan >= 3;
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 1 WHERE MaThuoc = 'T003' AND SoLuongCoSan >= 1;
 INSERT INTO ChiTietDonThuoc (MaDonThuoc, MaThuoc, SoLuongKe, CachDung, DonGiaApDung)
-SELECT 'TEST_DT901', MaThuoc, SoLuong, 'Theo chi dinh', DonGia
+SELECT 'DT901', MaThuoc, SoLuong, 'Theo chi dinh', DonGia
 FROM (
     SELECT 'T001' AS MaThuoc, 2 AS SoLuong
     UNION ALL SELECT 'T002', 3
     UNION ALL SELECT 'T003', 1
 ) AS DS JOIN Thuoc t USING(MaThuoc);
 UPDATE PhieuKhamBenh SET TrangThaiPhieuKham = 'HOAN_THANH'
-WHERE MaPhieuKhamBenh = 'TEST_PK901' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK901' AND TrangThaiPhieuKham = 'DANG_KHAM';
 
--- 2. TEST_PK902: BS001 tai kham CUNG BN001, khong tinh thanh 2 benh nhan.
+-- 2. PK902: BS001 tai kham CUNG BN001, khong tinh thanh 2 benh nhan.
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK902', 'BS001', 'HS001', '2026-10-12 09:00:00',
+VALUES ('PK902', 'BS001', 'HS001', '2026-10-12 09:00:00',
         'Tai kham', 'Da giam trieu chung', 150000, 'DANG_KHAM');
 INSERT INTO XetNghiem
     (MaPhieuKhamBenh, STTXetNghiem, TenXetNghiem, KetQuaXetNghiem, NgayGioThucHien, DonGiaApDung)
-VALUES ('TEST_PK902', 1, 'Xet nghiem kiem tra', 'Binh thuong', '2026-10-12 09:30:00', 40000);
+VALUES ('PK902', '01', 'Xet nghiem kiem tra', 'Binh thuong', '2026-10-12 09:30:00', 40000);
 UPDATE PhieuKhamBenh SET TrangThaiPhieuKham = 'HOAN_THANH'
-WHERE MaPhieuKhamBenh = 'TEST_PK902' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK902' AND TrangThaiPhieuKham = 'DANG_KHAM';
 
--- 3. TEST_PK903: BS002 co phieu DANG_KHAM trong thang 10, PHAI BI LOAI.
+-- 3. PK903: BS002 co phieu DANG_KHAM trong thang 10, PHAI BI LOAI.
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK903', 'BS002', 'HS002', '2026-10-15 10:00:00',
+VALUES ('PK903', 'BS002', 'HS002', '2026-10-15 10:00:00',
         NULL, 'Met moi', 180000, 'DANG_KHAM');
 INSERT INTO XetNghiem
     (MaPhieuKhamBenh, STTXetNghiem, TenXetNghiem, KetQuaXetNghiem, NgayGioThucHien, DonGiaApDung)
-VALUES ('TEST_PK903', 1, 'Duong huyet', NULL, NULL, 65000);
+VALUES ('PK903', '01', 'Duong huyet', NULL, NULL, 65000);
 
--- 4. TEST_PK904: BS004 / BN003, 2 loai thuoc, HOAN_THANH.
+-- 4. PK904: BS004 / BN003, 2 loai thuoc, HOAN_THANH.
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK904', 'BS004', 'HS003', '2026-10-16 09:00:00',
+VALUES ('PK904', 'BS004', 'HS003', '2026-10-16 09:00:00',
         'Dau co', 'Dau nhuc', 190000, 'DANG_KHAM');
 INSERT INTO DonThuoc (MaDonThuoc, MaPhieuKhamBenh, NgayLapDonThuoc, LoiDanChung)
-VALUES ('TEST_DT904', 'TEST_PK904', '2026-10-16', 'Theo doi trieu chung');
+VALUES ('DT904', 'PK904', '2026-10-16', 'Theo doi trieu chung');
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 2 WHERE MaThuoc = 'T002' AND SoLuongCoSan >= 2;
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 1 WHERE MaThuoc = 'T005' AND SoLuongCoSan >= 1;
 INSERT INTO ChiTietDonThuoc (MaDonThuoc, MaThuoc, SoLuongKe, CachDung, DonGiaApDung)
-SELECT 'TEST_DT904', MaThuoc, SoLuong, 'Theo chi dinh', DonGia
+SELECT 'DT904', MaThuoc, SoLuong, 'Theo chi dinh', DonGia
 FROM (
     SELECT 'T002' AS MaThuoc, 2 AS SoLuong
     UNION ALL SELECT 'T005', 1
 ) AS DS JOIN Thuoc t USING(MaThuoc);
 UPDATE PhieuKhamBenh SET TrangThaiPhieuKham = 'HOAN_THANH'
-WHERE MaPhieuKhamBenh = 'TEST_PK904' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK904' AND TrangThaiPhieuKham = 'DANG_KHAM';
 
--- 5. TEST_PK905: BS002 co phieu HOAN_THANH o thang 11, KHONG TINH cho thang 10.
+-- 5. PK905: BS002 co phieu HOAN_THANH o thang 11, KHONG TINH cho thang 10.
 -- Ngay 03/11 la thu 3, phu hop lich BS002; HS004 da duoc lap tu 01/10.
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung, GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK905', 'BS002', 'HS004', '2026-11-03 14:00:00',
+VALUES ('PK905', 'BS002', 'HS004', '2026-11-03 14:00:00',
         'Viem mui', 'Hat hoi', 180000, 'DANG_KHAM');
 INSERT INTO XetNghiem
     (MaPhieuKhamBenh, STTXetNghiem, TenXetNghiem, KetQuaXetNghiem, NgayGioThucHien, DonGiaApDung)
-VALUES ('TEST_PK905', 1, 'Cong thuc mau', 'Binh thuong', '2026-11-03 14:30:00', 70000);
+VALUES ('PK905', '01', 'Cong thuc mau', 'Binh thuong', '2026-11-03 14:30:00', 70000);
 INSERT INTO DonThuoc (MaDonThuoc, MaPhieuKhamBenh, NgayLapDonThuoc, LoiDanChung)
-VALUES ('TEST_DT905', 'TEST_PK905', '2026-11-03', 'Theo doi trieu chung');
+VALUES ('DT905', 'PK905', '2026-11-03', 'Theo doi trieu chung');
 UPDATE Thuoc SET SoLuongCoSan = SoLuongCoSan - 2 WHERE MaThuoc = 'T001' AND SoLuongCoSan >= 2;
 INSERT INTO ChiTietDonThuoc (MaDonThuoc, MaThuoc, SoLuongKe, CachDung, DonGiaApDung)
-SELECT 'TEST_DT905', MaThuoc, 2, 'Theo chi dinh', DonGia FROM Thuoc WHERE MaThuoc = 'T001';
+SELECT 'DT905', MaThuoc, 2, 'Theo chi dinh', DonGia FROM Thuoc WHERE MaThuoc = 'T001';
 UPDATE PhieuKhamBenh SET TrangThaiPhieuKham = 'HOAN_THANH'
-WHERE MaPhieuKhamBenh = 'TEST_PK905' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK905' AND TrangThaiPhieuKham = 'DANG_KHAM';
 
 -- 6. Truy van SQL-02 dung ? trong PREPARE de chay tren MySQL Workbench.
 -- Noi dung truy van tuong duong 04_search_statistics.sql (o Python thay ? bang %s).
@@ -107,8 +158,29 @@ SELECT
     bn.NgaySinh,
     bn.GioiTinh,
     bn.SoDienThoai,
-    bn.DiaChi
+    bn.DiaChi,
+    pkhoa.DanhSachKhoa AS Khoa
 FROM BenhNhan bn
+LEFT JOIN (
+    SELECT ds.MaBenhNhan,
+           GROUP_CONCAT(DISTINCT ds.TenKhoa ORDER BY ds.TenKhoa SEPARATOR '', '') AS DanhSachKhoa
+    FROM (
+        SELECT lh.MaBenhNhan, k.TenKhoa
+        FROM LichHen lh
+        JOIN BacSi bs ON bs.MaBacSi = lh.MaBacSi
+        JOIN Khoa k ON k.MaKhoa = bs.MaKhoa
+        WHERE lh.TrangThai <> ''DA_HUY''
+
+        UNION
+
+        SELECT hs.MaBenhNhan, k.TenKhoa
+        FROM PhieuKhamBenh pk
+        JOIN HoSoBenhAn hs ON hs.MaHoSo = pk.MaHoSo
+        JOIN BacSi bs ON bs.MaBacSi = pk.MaBacSi
+        JOIN Khoa k ON k.MaKhoa = bs.MaKhoa
+    ) ds
+    GROUP BY ds.MaBenhNhan
+) pkhoa ON pkhoa.MaBenhNhan = bn.MaBenhNhan
 WHERE (
     LOCATE(TRIM(COALESCE(?, '''')), bn.MaBenhNhan) > 0
     OR LOCATE(TRIM(COALESCE(?, '''')), bn.HoTen) > 0
@@ -121,6 +193,7 @@ ORDER BY bn.HoTen, bn.NgaySinh, bn.MaBenhNhan
 ';
 
 -- A1: 2 benh nhan trung ten Nguyen Van An -> BN001, BN002.
+-- Cot Khoa duoc hien kem; BN001 va BN002 deu thuoc K001 tu lich hen mau.
 SELECT 'A1: tim trung ten: mong doi BN001, BN002' AS CaKiemThu;
 SET @TuKhoa = 'Nguyễn Văn An', @NgaySinh = NULL, @GioiTinh = NULL, @DiaChi = NULL;
 EXECUTE test_tim_benh_nhan USING @TuKhoa, @TuKhoa, @TuKhoa, @NgaySinh, @GioiTinh, @DiaChi;
@@ -234,7 +307,7 @@ FROM (
            + (SELECT COALESCE(SUM(ct.SoLuongKe * ct.DonGiaApDung), 0)
               FROM DonThuoc d JOIN ChiTietDonThuoc ct ON ct.MaDonThuoc = d.MaDonThuoc
               WHERE d.MaPhieuKhamBenh = p.MaPhieuKhamBenh) AS TongGiaTriThucTe
-    FROM PhieuKhamBenh p WHERE p.MaPhieuKhamBenh = 'TEST_PK901'
+    FROM PhieuKhamBenh p WHERE p.MaPhieuKhamBenh = 'PK901'
 ) k;
 
 -- C2: Dem phieu HOAN_THANH dung thang 10 theo tung bac si, doc lap voi bao cao.
@@ -262,17 +335,17 @@ FROM Thuoc WHERE MaThuoc IN ('T001','T002','T003','T005') ORDER BY MaThuoc;
 -- D1-D3: Test them/sua/xoa BENH NHAN hop le, tim kiem thay doi theo.
 -- Trigger ngay sinh chap nhan 1999; khong de lai du lieu sau ROLLBACK.
 INSERT INTO BenhNhan (MaBenhNhan, HoTen, NgaySinh, GioiTinh, DiaChi, SoDienThoai)
-VALUES ('BN_TEST99', 'Nguyễn Văn An', '1999-05-12', 'NAM', 'Hà Nội', '0900000199');
+VALUES ('BN999', 'Nguyễn Văn An', '1999-05-12', 'NAM', 'Hà Nội', '0900000199');
 SELECT 'D1: them benh nhan trung ten => 3 ket qua' AS CaKiemThu,
        COUNT(*) AS ThucTe, 3 AS KyVong,
        CASE WHEN COUNT(*) = 3 THEN 'DAT' ELSE 'SAI' END AS KiemTra
 FROM BenhNhan WHERE HoTen = 'Nguyễn Văn An';
-UPDATE BenhNhan SET HoTen = 'Bệnh nhân vừa sửa' WHERE MaBenhNhan = 'BN_TEST99';
+UPDATE BenhNhan SET HoTen = 'Bệnh nhân vừa sửa' WHERE MaBenhNhan = 'BN999';
 SELECT 'D2: sua ten => ten moi tim thay' AS CaKiemThu,
        COUNT(*) AS ThucTe, 1 AS KyVong,
        CASE WHEN COUNT(*) = 1 THEN 'DAT' ELSE 'SAI' END AS KiemTra
 FROM BenhNhan WHERE HoTen = 'Bệnh nhân vừa sửa';
-DELETE FROM BenhNhan WHERE MaBenhNhan = 'BN_TEST99';
+DELETE FROM BenhNhan WHERE MaBenhNhan = 'BN999';
 SELECT 'D3: xoa => ten moi khong con' AS CaKiemThu,
        COUNT(*) AS ThucTe, 0 AS KyVong,
        CASE WHEN COUNT(*) = 0 THEN 'DAT' ELSE 'SAI' END AS KiemTra
@@ -280,12 +353,12 @@ FROM BenhNhan WHERE HoTen = 'Bệnh nhân vừa sửa';
 
 -- D4-D5: Them/xoa bac si KHONG co luot kham; bao cao phai van co dong 0.
 INSERT INTO BacSi (MaBacSi, MaKhoa, HoTen, GiaKham, TrinhDoHocVan, PhongKham)
-VALUES ('BS_TEST', 'K001', 'Bác sĩ kiểm thử', 130000, 'Bác sĩ', 'PTEST');
+VALUES ('BS999', 'K001', 'Bác sĩ kiểm thử', 130000, 'Bác sĩ', 'PTEST');
 SELECT 'D4: them bac si 0 luot => 9 bac si' AS CaKiemThu,
        COUNT(*) AS ThucTe, 9 AS KyVong,
        CASE WHEN COUNT(*) = 9 THEN 'DAT' ELSE 'SAI' END AS KiemTra
 FROM BacSi;
-DELETE FROM BacSi WHERE MaBacSi = 'BS_TEST';
+DELETE FROM BacSi WHERE MaBacSi = 'BS999';
 SELECT 'D5: xoa bac si 0 luot => 8 bac si' AS CaKiemThu,
        COUNT(*) AS ThucTe, 8 AS KyVong,
        CASE WHEN COUNT(*) = 8 THEN 'DAT' ELSE 'SAI' END AS KiemTra
@@ -296,10 +369,10 @@ FROM BacSi;
 INSERT INTO PhieuKhamBenh
     (MaPhieuKhamBenh, MaBacSi, MaHoSo, NgayGioKham, ChanDoan, TrieuChung,
      GiaKhamApDung, TrangThaiPhieuKham)
-VALUES ('TEST_PK906', 'BS003', 'HS005', '2026-10-20 09:00:00',
+VALUES ('PK906', 'BS003', 'HS005', '2026-10-20 09:00:00',
         'Kham tong quat', 'Met moi', 200000, 'DANG_KHAM');
 UPDATE PhieuKhamBenh SET GiaKhamApDung = 210000
-WHERE MaPhieuKhamBenh = 'TEST_PK906' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK906' AND TrangThaiPhieuKham = 'DANG_KHAM';
 SELECT 'D6a: chua hoan thanh => BS003 0 luot' AS CaKiemThu,
        COUNT(*) AS ThucTe, 0 AS KyVong,
        CASE WHEN COUNT(*) = 0 THEN 'DAT' ELSE 'SAI' END AS KiemTra
@@ -307,7 +380,7 @@ FROM PhieuKhamBenh
 WHERE MaBacSi = 'BS003' AND TrangThaiPhieuKham = 'HOAN_THANH'
   AND NgayGioKham >= '2026-10-01' AND NgayGioKham < '2026-11-01';
 UPDATE PhieuKhamBenh SET TrangThaiPhieuKham = 'HOAN_THANH'
-WHERE MaPhieuKhamBenh = 'TEST_PK906' AND TrangThaiPhieuKham = 'DANG_KHAM';
+WHERE MaPhieuKhamBenh = 'PK906' AND TrangThaiPhieuKham = 'DANG_KHAM';
 SELECT 'D6b: chot xong => BS003 1 luot / 210000' AS CaKiemThu,
        COUNT(*) AS SoLuot, COALESCE(SUM(GiaKhamApDung), 0) AS TongTien,
        CASE WHEN COUNT(*) = 1 AND COALESCE(SUM(GiaKhamApDung), 0) = 210000
@@ -316,13 +389,88 @@ FROM PhieuKhamBenh
 WHERE MaBacSi = 'BS003' AND TrangThaiPhieuKham = 'HOAN_THANH'
   AND NgayGioKham >= '2026-10-01' AND NgayGioKham < '2026-11-01';
 
--- KHONG DUOC COMMIT; hoan tac toan bo 6 phieu va thay doi ton kho.
+
+-- E. KIỂM THỬ TÌM KIẾM LỊCH LÀM VIỆC BÁC SĨ
+-- Số ca kỳ vọng dựa trên seed.sql (8 bác sĩ, mỗi bác sĩ 6 ca).
+PREPARE test_lich_bac_si FROM '
+SELECT COUNT(*) AS SoCaThucTe, ? AS SoCaKyVong,
+       CASE WHEN COUNT(*) = ? THEN ''DAT'' ELSE ''SAI'' END AS KiemTra
+FROM LichLamViecBacSi lv
+JOIN BacSi bs ON bs.MaBacSi = lv.MaBacSi
+JOIN Khoa k ON k.MaKhoa = bs.MaKhoa
+WHERE (NULLIF(TRIM(?), '''') IS NULL OR bs.MaKhoa = ?)
+  AND (NULLIF(TRIM(?), '''') IS NULL OR LOCATE(TRIM(?), bs.HoTen) > 0)
+  AND (NULLIF(TRIM(?), '''') IS NULL OR bs.TrinhDoHocVan = ?)
+  AND (? IS NULL OR lv.Thu = ?)
+';
+
+-- E1: Không lọc -> 48 ca.
+SET @KyVong = 48, @Khoa = NULL, @Ten = NULL, @ChucDanh = NULL, @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E2: Khoa K001 -> 12 ca.
+SET @KyVong = 12, @Khoa = 'K001', @Ten = NULL, @ChucDanh = NULL, @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E3: Tên Nguyễn Hoàng Minh -> 6 ca.
+SET @KyVong = 6, @Khoa = NULL, @Ten = 'Nguyễn Hoàng Minh', @ChucDanh = NULL, @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E4: Chức danh Thạc sĩ -> 18 ca.
+SET @KyVong = 18, @Khoa = NULL, @Ten = NULL, @ChucDanh = 'Thạc sĩ', @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E5: Thứ 2 -> 8 ca.
+SET @KyVong = 8, @Khoa = NULL, @Ten = NULL, @ChucDanh = NULL, @Thu = 2;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E6: K001 + Nguyễn Hoàng Minh + Thạc sĩ + Thứ 2 -> 2 ca.
+SET @KyVong = 2, @Khoa = 'K001', @Ten = 'Nguyễn Hoàng Minh', @ChucDanh = 'Thạc sĩ', @Thu = 2;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E7: Tên không tồn tại -> 0 ca.
+SET @KyVong = 0, @Khoa = NULL, @Ten = 'Khong co bac si', @ChucDanh = NULL, @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E8: Bộ lọc chuỗi rỗng -> 48 ca.
+SET @KyVong = 48, @Khoa = '', @Ten = '  ', @ChucDanh = '', @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E9: Tìm tên chứa % hoặc _ (ký tự theo nghĩa đen) -> mỗi trường hợp 0 ca trên seed.
+SET @KyVong = 0, @Khoa = NULL, @Ten = '%', @ChucDanh = NULL, @Thu = NULL;
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+SET @Ten = '_';
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+
+-- E10: Thêm dữ liệu chứa ký tự % và _ thật để kiểm tra tìm chính xác.
+INSERT INTO BacSi (MaBacSi, MaKhoa, HoTen, GiaKham, TrinhDoHocVan, PhongKham)
+VALUES ('BS998', 'K001', 'Bác sĩ %_ thử', 150000, 'Thạc sĩ', 'P998');
+INSERT INTO LichLamViecBacSi (MaBacSi, Thu, GioBatDau, GioKetThuc)
+VALUES ('BS998', 2, '08:00:00', '12:00:00');
+SET @KyVong = 1, @Ten = '%';
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+SET @Ten = '_';
+EXECUTE test_lich_bac_si USING @KyVong, @KyVong, @Khoa, @Khoa, @Ten, @Ten, @ChucDanh, @ChucDanh, @Thu, @Thu;
+DEALLOCATE PREPARE test_lich_bac_si;
+
+-- KHONG DUOC COMMIT; rollback 7 phieu, LH901 va cac thay doi ton kho/trang thai hen.
 ROLLBACK;
 
--- C4: Sau ROLLBACK, so phieu TEST_PK9* phai bang 0.
+-- C4: Sau ROLLBACK, so phieu PK9* phai bang 0.
 SELECT COUNT(*) AS SoPhieuConLai,
        CASE WHEN COUNT(*) = 0 THEN 'DAT' ELSE 'SAI' END AS KiemTra
-FROM PhieuKhamBenh WHERE MaPhieuKhamBenh LIKE 'TEST_PK9%';
+FROM PhieuKhamBenh WHERE MaPhieuKhamBenh LIKE 'PK9%';
+
+-- 0c: Hai lich hen seed van CHO_KHAM; lich LH901 trong test bi hoan tac.
+SELECT '0c-a: lich seed van CHO_KHAM' AS CaKiemThu,
+       COUNT(*) AS SoLichChoThucTe,
+       CASE WHEN COUNT(*) = 2 THEN 'DAT' ELSE 'SAI' END AS KiemTra
+FROM LichHen
+WHERE MaLichHen IN ('LH001', 'LH002') AND TrangThai = 'CHO_KHAM';
+SELECT '0c-b: LH901 duoc hoan tac' AS CaKiemThu,
+       COUNT(*) AS SoBanGhiThucTe,
+       CASE WHEN COUNT(*) = 0 THEN 'DAT' ELSE 'SAI' END AS KiemTra
+FROM LichHen WHERE MaLichHen = 'LH901';
 
 -- C5: Ton kho ve dung gia tri ban dau trong seed.sql.
 SELECT MaThuoc, SoLuongCoSan AS TonKhoSauRollback

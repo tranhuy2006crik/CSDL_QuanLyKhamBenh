@@ -4,15 +4,18 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 from app.errors import AppError
-from app.finalized_queries import Q_MONTHLY_DOCTOR_STATISTICS
+from app.appointment_queries import Q_MARK_APPOINTMENT_DONE
+from app.finalized_queries import Q_COMPLETE_VISIT, Q_MONTHLY_DOCTOR_STATISTICS
 from app.read_queries import (
     Q_INSERT_PHIEU_KHAM,
     Q_INSERT_XET_NGHIEM,
     Q_LICH_SU_BENH_NHAN,
+    Q_UPDATE_XET_NGHIEM,
 )
 from app.services.clinic_service import (
     bao_cao_bac_si,
     lay_lich_lam_viec,
+    hoan_thanh_phieu_kham,
     luu_xet_nghiem,
     tao_phieu_kham,
     xoa_phieu_dang_kham,
@@ -53,16 +56,19 @@ class ClinicServiceTests(unittest.TestCase):
         rows = [
             {
                 "ten_bac_si": "Bác sĩ A",
+                "ten_khoa": "Khoa Nội",
                 "thu": "Thứ Tư",
                 "gio_bat_dau": timedelta(hours=8),
             },
             {
                 "ten_bac_si": "Bác sĩ A",
+                "ten_khoa": "Khoa Nội",
                 "thu": "Thứ Hai",
                 "gio_bat_dau": timedelta(hours=13),
             },
             {
                 "ten_bac_si": "Bác sĩ A",
+                "ten_khoa": "Khoa Nội",
                 "thu": "Thứ Hai",
                 "gio_bat_dau": timedelta(hours=8),
             },
@@ -117,27 +123,24 @@ class ClinicServiceTests(unittest.TestCase):
         )
         connection.commit.assert_called_once()
 
-    def test_lab_sequence_is_scoped_to_consultation_and_saved_to_its_foreign_key(self) -> None:
+    def test_lab_uses_manually_entered_padded_sequence(self) -> None:
         connection = Mock()
         cursor = Mock()
         connection.cursor.return_value = cursor
-        cursor.fetchone.side_effect = [
-            {"trang_thai": "DANG_KHAM"},
-            {"stt": 2},
-        ]
+        cursor.fetchone.return_value = {"trang_thai": "DANG_KHAM"}
         with patch(
             "app.services.clinic_service.get_connection", return_value=connection
         ):
             stt = luu_xet_nghiem(
-                1001, "Công thức máu", None, None, Decimal("90000")
+                1001, "Công thức máu", None, None, Decimal("90000"), "02"
             )
 
         insert = next(
             call for call in cursor.execute.call_args_list if call.args[0] == Q_INSERT_XET_NGHIEM
         )
-        self.assertEqual(stt, 2)
+        self.assertEqual(stt, "02")
         self.assertEqual(insert.args[1]["ma_phieu"], 1001)
-        self.assertEqual(insert.args[1]["stt"], 2)
+        self.assertEqual(insert.args[1]["stt"], "02")
         self.assertEqual(insert.args[1]["ket_qua"], None)
         self.assertEqual(insert.args[1]["don_gia_ap_dung"], Decimal("90000"))
         connection.commit.assert_called_once()
@@ -151,8 +154,104 @@ class ClinicServiceTests(unittest.TestCase):
                     "Bình thường",
                     None,
                     Decimal("100000"),
+                    "01",
                 )
         get_connection.assert_not_called()
+
+    def test_lab_rejects_stt_outside_01_to_99_before_connection(self) -> None:
+        with patch("app.services.clinic_service.get_connection") as get_connection:
+            for invalid_stt in ("1", "00", "100", 1, ""):
+                with self.subTest(stt=invalid_stt):
+                    with self.assertRaises(AppError):
+                        luu_xet_nghiem(
+                            1001,
+                            "Công thức máu",
+                            None,
+                            None,
+                            Decimal("90000"),
+                            invalid_stt,
+                        )
+        get_connection.assert_not_called()
+
+    def test_lab_update_can_change_manual_stt_without_numeric_conversion(self) -> None:
+        connection = Mock()
+        cursor = Mock()
+        connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {"trang_thai": "DANG_KHAM"},
+            {"STTXetNghiem": "02"},
+        ]
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            result = luu_xet_nghiem(
+                "PK001",
+                "Công thức máu",
+                None,
+                None,
+                Decimal("90000"),
+                "03",
+                "02",
+            )
+
+        update = next(
+            call
+            for call in cursor.execute.call_args_list
+            if call.args[0] == Q_UPDATE_XET_NGHIEM
+        )
+        self.assertEqual(result, "03")
+        self.assertEqual(update.args[1]["stt"], "03")
+        self.assertEqual(update.args[1]["stt_cu"], "02")
+        connection.commit.assert_called_once()
+
+    def test_completing_linked_visit_updates_appointment_in_same_transaction(self) -> None:
+        connection = Mock()
+        cursor = Mock()
+        cursor.fetchone.return_value = {
+            "ma_bac_si": 3,
+            "trang_thai": "DANG_KHAM",
+            "ma_lich": "LH001",
+        }
+        cursor.rowcount = 1
+        connection.cursor.return_value = cursor
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            hoan_thanh_phieu_kham("PK001", 3)
+
+        queries = [item.args[0] for item in cursor.execute.call_args_list]
+        self.assertIn(Q_COMPLETE_VISIT, queries)
+        self.assertIn(Q_MARK_APPOINTMENT_DONE, queries)
+        connection.commit.assert_called_once()
+        connection.rollback.assert_not_called()
+
+    def test_linked_appointment_update_failure_rolls_back_visit_completion(self) -> None:
+        connection = Mock()
+        cursor = Mock()
+        cursor.fetchone.return_value = {
+            "ma_bac_si": 3,
+            "trang_thai": "DANG_KHAM",
+            "ma_lich": "LH001",
+        }
+        cursor.execute.side_effect = [
+            None,
+            None,
+        ]
+        cursor.rowcount = 1
+
+        def execute(query, _params):
+            cursor.rowcount = 1 if query == Q_COMPLETE_VISIT else 0
+
+        cursor.execute.side_effect = execute
+        connection.cursor.return_value = cursor
+        with patch(
+            "app.services.clinic_service.get_connection", return_value=connection
+        ):
+            with self.assertRaises(AppError):
+                hoan_thanh_phieu_kham("PK001", 3)
+
+        connection.commit.assert_not_called()
+        connection.rollback.assert_called_once()
 
     def test_delete_in_progress_visit_checks_each_dependent_row_count(self) -> None:
         connection, cursor = self._delete_visit_connection(stock_rows=1)

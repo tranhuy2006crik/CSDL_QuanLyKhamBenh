@@ -1,8 +1,9 @@
 -- seed.sql - Du lieu nen cho he thong Quan ly kham benh
--- Tuong thich voi 01_schema(6).sql cua nhom (MySQL 8.0+).
+-- Tuong thich voi 01_schema.sql cua nhom (MySQL 8.0+).
 -- Du lieu hoan toan gia lap, chi dung cho BTL / demo.
 -- Chi nap vao CSDL moi tao va dang trong. Khong chay lai khi da co du lieu.
 -- KHONG tao ban ghi o PhieuKhamBenh, XetNghiem, DonThuoc, ChiTietDonThuoc.
+-- Co tao 2 lich hen mau de demo cot Khoa trong ket qua tim kiem benh nhan.
 -- Trinh tu INSERT tuan thu khoa ngoai trong DDL.
 
 SET NAMES utf8mb4;
@@ -97,7 +98,35 @@ INSERT INTO BenhNhan (MaBenhNhan, HoTen, NgaySinh, GioiTinh, DiaChi, SoDienThoai
   ('BN014', 'Phan Minh Anh', '2010-06-30', 'NU', 'Hà Nội', '0900000114'),
   ('BN015', 'Tạ Ngọc Lan', '1990-03-13', 'NU', NULL, NULL);
 
--- 5. HO SO BENH AN (15 ho so; moi benh nhan dung 1 ho so)
+-- 5. LICH HEN (2 lich cho; chon tu dong ngay lam viec tiep theo de khong dat vao qua khu)
+-- Gio hen lay tu dau ca 08:00/13:00, nam tren moc 30 phut va trong ca lam viec.
+INSERT INTO LichHen (MaLichHen, MaBacSi, MaBenhNhan, NgayHen, GioBatDau, TrangThai)
+SELECT 'LH001', 'BS001', 'BN001',
+       DATE_ADD(CURRENT_DATE(), INTERVAL slot.DaysAhead DAY),
+       slot.GioHen, 'CHO_KHAM'
+FROM (
+    SELECT llv.GioBatDau AS GioHen,
+           MOD(llv.Thu - IF(DAYOFWEEK(CURRENT_DATE()) = 1, 8, DAYOFWEEK(CURRENT_DATE())) + 6, 7) + 1 AS DaysAhead
+    FROM LichLamViecBacSi llv
+    WHERE llv.MaBacSi = 'BS001'
+    ORDER BY DaysAhead, GioHen
+    LIMIT 1
+) AS slot;
+
+INSERT INTO LichHen (MaLichHen, MaBacSi, MaBenhNhan, NgayHen, GioBatDau, TrangThai)
+SELECT 'LH002', 'BS004', 'BN003',
+       DATE_ADD(CURRENT_DATE(), INTERVAL slot.DaysAhead DAY),
+       slot.GioHen, 'CHO_KHAM'
+FROM (
+    SELECT llv.GioBatDau AS GioHen,
+           MOD(llv.Thu - IF(DAYOFWEEK(CURRENT_DATE()) = 1, 8, DAYOFWEEK(CURRENT_DATE())) + 6, 7) + 1 AS DaysAhead
+    FROM LichLamViecBacSi llv
+    WHERE llv.MaBacSi = 'BS004'
+    ORDER BY DaysAhead, GioHen
+    LIMIT 1
+) AS slot;
+
+-- 6. HO SO BENH AN (15 ho so; moi benh nhan dung 1 ho so)
 INSERT INTO HoSoBenhAn (MaHoSo, MaBenhNhan, NgayLap, TienSuBenh) VALUES
   ('HS001', 'BN001', '2026-10-01', 'Chưa ghi nhận bệnh nền'),
   ('HS002', 'BN002', '2026-10-01', 'Tiền sử dị ứng thời tiết'),
@@ -115,7 +144,7 @@ INSERT INTO HoSoBenhAn (MaHoSo, MaBenhNhan, NgayLap, TienSuBenh) VALUES
   ('HS014', 'BN014', '2026-11-01', 'Theo dõi sức khỏe định kỳ'),
   ('HS015', 'BN015', '2026-11-01', NULL);
 
--- 6. THUOC (12 loai; co ton kho du, it va het hang)
+-- 7. THUOC (12 loai; co ton kho du, it va het hang)
 INSERT INTO Thuoc (MaThuoc, TenThuoc, DonGia, DonViTinh, SoLuongCoSan) VALUES
   ('T001', 'Paracetamol 500 mg', 2500, 'Viên', 180),
   ('T002', 'Vitamin C 500 mg', 3000, 'Viên', 140),

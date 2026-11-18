@@ -1,4 +1,5 @@
 import calendar
+import re
 import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime, time, date
@@ -16,6 +17,7 @@ from app.services.clinic_service import (
     tao_phieu_kham,
     lay_benh_nhan,
 )
+from app.services.appointment_service import tao_phieu_kham_tu_lich
 from app.services.tra_cuu_service import (
     bao_cao_chi_tiet_phieu,
     lay_chi_tiet_lan_kham,
@@ -36,6 +38,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ma_benh_nhan: Identifier,
         ma_bac_si: Identifier,
         ten_benh_nhan: str,
+        ma_lich_hen: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.withdraw()
@@ -52,6 +55,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         self.result: Identifier | None = None
         self.ma_benh_nhan = ma_benh_nhan
         self.ma_bac_si = ma_bac_si
+        self.ma_lich_hen = ma_lich_hen
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
 
@@ -62,7 +66,14 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
         ttk.Label(
             self,
-            text="Mã phiếu khám nhập thủ công theo quy ước cấp mã của nhóm.",
+            text=(
+                "Mã phiếu khám nhập thủ công theo quy ước cấp mã của nhóm."
+                + (
+                    " Chỉ nhập mã hồ sơ mới nếu bệnh nhân chưa có hồ sơ bệnh án."
+                    if ma_lich_hen is not None
+                    else ""
+                )
+            ),
             wraplength=600,
         ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
 
@@ -72,6 +83,15 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ttk.Label(fields, text="Mã phiếu khám").grid(row=0, column=0, sticky="w")
         self.ma_phieu = ttk.Entry(fields)
         self.ma_phieu.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self.ma_ho_so: ttk.Entry | None = None
+        if ma_lich_hen is not None:
+            ttk.Label(fields, text="Mã hồ sơ mới (nếu chưa có)").grid(
+                row=1, column=0, sticky="w", pady=(8, 0)
+            )
+            self.ma_ho_so = ttk.Entry(fields)
+            self.ma_ho_so.grid(
+                row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0)
+            )
 
         ttk.Label(self, text="Triệu chứng").grid(
             row=3, column=0, sticky="w", padx=12, pady=(10, 4)
@@ -104,7 +124,11 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         actions = ttk.Frame(self, padding=12)
         actions.grid(row=7, column=0, sticky="ew")
         ttk.Button(actions, text="Hủy", command=self.destroy).pack(side="right")
-        ttk.Button(actions, text="Tạo phiếu khám", command=self._save).pack(
+        ttk.Button(
+            actions,
+            text="Tiếp nhận lịch" if ma_lich_hen else "Tạo phiếu khám",
+            command=self._save,
+        ).pack(
             side="right", padx=(0, 8)
         )
         self.grab_set()
@@ -115,17 +139,38 @@ class TaoPhieuKhamDialog(tk.Toplevel):
             ma_phieu = self.ma_phieu.get().strip()
             if not ma_phieu:
                 raise ValueError("empty")
-            tao_phieu_kham(
-                ma_phieu,
-                self.ma_benh_nhan,
-                self.ma_bac_si,
-                self.trieu_chung.get("1.0", "end").strip(),
-                self.chan_doan.get("1.0", "end").strip(),
+            symptoms = self.trieu_chung.get("1.0", "end").strip()
+            diagnosis = self.chan_doan.get("1.0", "end").strip()
+            new_dossier = (
+                self.ma_ho_so.get().strip() or None
+                if self.ma_ho_so is not None
+                else None
             )
+            if self.ma_lich_hen is not None:
+                tao_phieu_kham_tu_lich(
+                    ma_phieu,
+                    self.ma_lich_hen,
+                    self.ma_bac_si,
+                    symptoms,
+                    new_dossier,
+                    diagnosis,
+                )
+            else:
+                tao_phieu_kham(
+                    ma_phieu,
+                    self.ma_benh_nhan,
+                    self.ma_bac_si,
+                    symptoms,
+                    diagnosis,
+                )
         except ValueError:
             hien_loi(
                 self,
-                AppError("DU_LIEU_KHONG_HOP_LE", "Hãy nhập mã phiếu khám.", "ma_phieu"),
+                AppError(
+                    "DU_LIEU_KHONG_HOP_LE",
+                    "Hãy nhập mã phiếu khám và chỉ nhập mã hồ sơ mới khi cần.",
+                    "ma_phieu",
+                ),
             )
             return
         except Exception as error:
@@ -146,13 +191,13 @@ class XetNghiemDialog(tk.Toplevel):
         super().__init__(parent)
         self.withdraw()
         self.title("Xét nghiệm")
-        self.geometry("620x480")
+        self.geometry("620x520")
         self.update_idletasks()
         x = (self.winfo_screenwidth() - self.winfo_width()) // 2
         y = (self.winfo_screenheight() - self.winfo_height()) // 2
         self.geometry(f"+{x}+{y}")
         self.deiconify()
-        self.minsize(520, 420)
+        self.minsize(520, 460)
         self.configure(background="#F4F7FA")
         self.transient(parent)
         self.ma_phieu = ma_phieu
@@ -166,11 +211,14 @@ class XetNghiemDialog(tk.Toplevel):
             font=("TkDefaultFont", 14, "bold"),
         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=12)
 
-        self.name = self._entry("Tên xét nghiệm", 1)
-        self.price = self._entry("Đơn giá áp dụng (VNĐ)", 2)
+        self.stt = self._entry("STT xét nghiệm (01-99)", 1)
+        self.name = self._entry("Tên xét nghiệm", 2)
+        self.price = self._entry("Đơn giá áp dụng (VNĐ)", 3)
+        if self.row is not None:
+            self.stt.insert(0, str(self.row["stt"]))
 
         ttk.Label(self, text="Kết quả (để trống nếu đang chờ)").grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 3)
+            row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 3)
         )
         self.result_text = tk.Text(
             self,
@@ -181,14 +229,14 @@ class XetNghiemDialog(tk.Toplevel):
             highlightbackground="#CCD6E0",
             highlightthickness=1,
         )
-        self.result_text.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12)
+        self.result_text.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12)
 
         ttk.Label(self, text="Thời điểm thực hiện").grid(
-            row=5, column=0, sticky="w", padx=12, pady=10
+            row=6, column=0, sticky="w", padx=12, pady=10
         )
 
         time_frame = ttk.Frame(self)
-        time_frame.grid(row=5, column=1, sticky="ew", padx=12, pady=10)
+        time_frame.grid(row=6, column=1, sticky="ew", padx=12, pady=10)
 
         self.date_picker = ttk.Entry(time_frame, width=12)
         self.date_picker.pack(side="left")
@@ -209,13 +257,13 @@ class XetNghiemDialog(tk.Toplevel):
 
         ttk.Label(
             self,
-            text="Xét nghiệm được lưu cùng mã phiếu; STT được cấp tuần tự trong phiếu.",
+            text="Nhập STT duy nhất từ 01 đến 99 trong phiếu khám.",
             wraplength=560,
             foreground="gray",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
 
         actions = ttk.Frame(self, padding=12)
-        actions.grid(row=7, column=0, columnspan=2, sticky="ew")
+        actions.grid(row=8, column=0, columnspan=2, sticky="ew")
         ttk.Button(
             actions, text="Hủy", command=self.destroy, style="Secondary.TButton"
         ).pack(side="right")
@@ -372,6 +420,18 @@ class XetNghiemDialog(tk.Toplevel):
                 )
                 return
 
+            stt = self.stt.get().strip()
+            if not re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt):
+                hien_loi(
+                    self,
+                    AppError(
+                        "DU_LIEU_KHONG_HOP_LE",
+                        "STT xét nghiệm phải có định dạng từ 01 đến 99.",
+                        "stt",
+                    ),
+                )
+                return
+
             price_str = self.price.get().strip()
             price_val = Decimal(price_str) if price_str else Decimal("0")
 
@@ -381,7 +441,8 @@ class XetNghiemDialog(tk.Toplevel):
                 result,
                 performed_at,
                 price_val,
-                int(self.row["stt"]) if self.row is not None else None,
+                stt,
+                str(self.row["stt"]) if self.row is not None else None,
             )
         except (InvalidOperation, ValueError):
             hien_loi(
@@ -871,7 +932,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         selection = self.lab_table.selection()
         if not selection:
             return None
-        stt = int(selection[0])
+        stt = selection[0]
         try:
             detail = lay_chi_tiet_lan_kham(
                 self.ma_phieu, self.vai_tro, self.ma_nguoi_xem

@@ -1,4 +1,5 @@
 import calendar
+import re
 import tkinter as tk
 from datetime import date, datetime
 from decimal import Decimal
@@ -648,7 +649,8 @@ class DoctorReportView(ttk.Frame):
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent, padding=12)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(3, weight=2)
+        self.rowconfigure(4, weight=1)
         today = date.today()
 
         ttk.Label(
@@ -656,22 +658,24 @@ class DoctorReportView(ttk.Frame):
             text="Báo cáo giá trị khám theo bác sĩ",
             font=("TkDefaultFont", 16, "bold"),
         ).grid(row=0, column=0, sticky="w")
-        controls = ttk.LabelFrame(self, text="Kỳ báo cáo", padding=8)
-        controls.grid(row=1, column=0, sticky="ew", pady=8)
-        ttk.Label(controls, text="Tháng").grid(row=0, column=0, sticky="w")
+        period = ttk.LabelFrame(self, text="Kỳ báo cáo", padding=8)
+        period.grid(row=1, column=0, sticky="ew", pady=8)
+        control_fields = ttk.Frame(period)
+        control_fields.pack()
+        ttk.Label(control_fields, text="Tháng").grid(row=0, column=0, sticky="w")
         self.month = ttk.Combobox(
-            controls,
+            control_fields,
             state="readonly",
             width=5,
             values=[str(month) for month in range(1, 13)],
         )
         self.month.set(str(today.month))
         self.month.grid(row=0, column=1, padx=5)
-        ttk.Label(controls, text="Năm").grid(row=0, column=2, sticky="w")
-        self.year = ttk.Entry(controls, width=8)
+        ttk.Label(control_fields, text="Năm").grid(row=0, column=2, sticky="w")
+        self.year = ttk.Entry(control_fields, width=8)
         self.year.insert(0, str(today.year))
         self.year.grid(row=0, column=3, padx=5)
-        ttk.Button(controls, text="Xem thống kê", command=self._refresh).grid(
+        ttk.Button(control_fields, text="Xem thống kê", command=self._refresh).grid(
             row=0, column=4, padx=8
         )
 
@@ -702,7 +706,7 @@ class DoctorReportView(ttk.Frame):
         self.summary_value.grid(row=0, column=2, sticky="e")
 
         table_frame = ttk.Frame(self)
-        table_frame.grid(row=3, column=0, sticky="nsew")
+        table_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
         columns = (
@@ -746,8 +750,28 @@ class DoctorReportView(ttk.Frame):
         table_scroll.grid(row=0, column=1, sticky="ns")
         self.table.configure(yscrollcommand=table_scroll.set)
 
+        chart_frame = ttk.LabelFrame(
+            self, text="Biểu đồ cột ghép ngang theo bác sĩ", padding=6
+        )
+        chart_frame.grid(row=4, column=0, sticky="nsew", pady=(0, 8))
+        chart_frame.columnconfigure(0, weight=1)
+        chart_frame.rowconfigure(0, weight=1)
+        self.chart = tk.Canvas(
+            chart_frame,
+            height=210,
+            background="#FFFFFF",
+            highlightthickness=0,
+        )
+        self.chart.grid(row=0, column=0, sticky="nsew")
+        chart_scroll = ttk.Scrollbar(
+            chart_frame, orient="vertical", command=self.chart.yview
+        )
+        chart_scroll.grid(row=0, column=1, sticky="ns")
+        self.chart.configure(yscrollcommand=chart_scroll.set)
+        self.chart.bind("<Configure>", self._draw_chart)
+
         footer = ttk.Frame(self)
-        footer.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         ttk.Label(
             footer,
             text="Chi phí ghi nhận = giá khám áp dụng + xét nghiệm + thuốc; không phản ánh thanh toán.",
@@ -759,23 +783,142 @@ class DoctorReportView(ttk.Frame):
             style="Info.TButton",
         ).pack(side="right")
         self.rows: list[BaoCaoBacSiRow] = []
+        self.loaded_period: tuple[int, int] | None = None
         self._refresh()
+
+    def _selected_period(self) -> tuple[int, int]:
+        month_text = self.month.get().strip()
+        year_text = self.year.get().strip()
+        if not re.fullmatch(r"(?:[1-9]|1[0-2])", month_text):
+            raise AppError(
+                "DU_LIEU_KHONG_HOP_LE", "Hãy chọn tháng từ 1 đến 12.", "thang"
+            )
+        if not re.fullmatch(r"[0-9]{1,4}", year_text):
+            raise AppError(
+                "DU_LIEU_KHONG_HOP_LE", "Năm phải là số từ 1 đến 9998.", "nam"
+            )
+        month, year = int(month_text), int(year_text)
+        if not 1 <= year <= 9998:
+            raise AppError(
+                "DU_LIEU_KHONG_HOP_LE", "Năm phải nằm trong khoảng 1 đến 9998.", "nam"
+            )
+        return month, year
+
+    def _draw_chart(self, _event: tk.Event | None = None) -> None:
+        self.chart.delete("all")
+        width = max(self.chart.winfo_width(), 520)
+        viewport_height = max(self.chart.winfo_height(), 180)
+        left, right, top = 150, 112, 36
+        if not self.rows:
+            self.chart.create_text(
+                width / 2,
+                viewport_height / 2,
+                text="Không có dữ liệu cho kỳ báo cáo.",
+                fill="#64748B",
+            )
+            self.chart.configure(scrollregion=(0, 0, width, viewport_height))
+            return
+
+        visit_max = max(int(row["so_luot_kham"] or 0) for row in self.rows) or 1
+        value_max = max(
+            (Decimal(str(row["tong_gia_tri"] or 0)) for row in self.rows),
+            default=Decimal("0"),
+        ) or Decimal("1")
+        row_height = 30
+        content_height = top + row_height * len(self.rows) + 8
+        bar_area_width = max(80, width - left - right)
+        self.chart.configure(scrollregion=(0, 0, width, content_height))
+        self.chart.create_rectangle(10, 9, 20, 19, fill="#168AAD", outline="")
+        self.chart.create_text(26, 14, text="Số lượt khám", anchor="w", fill="#111827")
+        self.chart.create_rectangle(130, 9, 140, 19, fill="#E58A2B", outline="")
+        self.chart.create_text(146, 14, text="Tổng giá trị khám", anchor="w", fill="#111827")
+        self.chart.create_text(
+            width - 8,
+            14,
+            text="Mỗi chuỗi dùng thang đo riêng",
+            anchor="e",
+            fill="#64748B",
+        )
+        chart_rows = sorted(
+            self.rows,
+            key=lambda item: Decimal(str(item["tong_gia_tri"] or 0)),
+            reverse=True,
+        )
+        for index, row in enumerate(chart_rows):
+            row_top = top + index * row_height
+            visits = int(row["so_luot_kham"] or 0)
+            value = Decimal(str(row["tong_gia_tri"] or 0))
+            name = row["ten_bac_si"]
+            if len(name) > 20:
+                name = name[:19] + "…"
+            self.chart.create_text(
+                8,
+                row_top + 9,
+                text=name,
+                anchor="w",
+                fill="#111827",
+                font=("TkDefaultFont", 8),
+            )
+            for bar_y, amount, maximum, color, label in (
+                (
+                    row_top + 2,
+                    visits,
+                    visit_max,
+                    "#168AAD",
+                    str(visits),
+                ),
+                (
+                    row_top + 15,
+                    value,
+                    value_max,
+                    "#E58A2B",
+                    dinh_dang_tien(value),
+                ),
+            ):
+                self.chart.create_rectangle(
+                    left,
+                    bar_y,
+                    left + bar_area_width,
+                    bar_y + 7,
+                    fill="#E2E8F0",
+                    outline="",
+                )
+                scaled_width = bar_area_width * float(amount / maximum)
+                if scaled_width > 0:
+                    self.chart.create_rectangle(
+                        left,
+                        bar_y,
+                        left + scaled_width,
+                        bar_y + 7,
+                        fill=color,
+                        outline="",
+                    )
+                self.chart.create_text(
+                    width - 8,
+                    bar_y + 3.5,
+                    text=label,
+                    anchor="e",
+                    fill="#334155",
+                    font=("TkDefaultFont", 8),
+                )
+            self.chart.create_rectangle(
+                8,
+                row_top + row_height - 1,
+                width - 8,
+                row_top + row_height - 0.5,
+                fill="#E2E8F0",
+                outline="",
+            )
 
     def _refresh(self) -> None:
         try:
-            month = int(self.month.get())
-            year = int(self.year.get().strip())
+            month, year = self._selected_period()
             rows = bao_cao_bac_si(month, year)
-        except ValueError:
-            hien_loi(
-                self,
-                AppError("DU_LIEU_KHONG_HOP_LE", "Năm phải là số nguyên.", "nam"),
-            )
-            return
         except Exception as error:
             hien_loi(self, error)
             return
         self.rows = rows
+        self.loaded_period = (month, year)
         for item in self.table.get_children():
             self.table.delete(item)
         for row in rows:
@@ -804,20 +947,21 @@ class DoctorReportView(ttk.Frame):
         self.summary_value.configure(
             text=f"Tổng giá trị khám: {dinh_dang_tien(total_amount)}"
         )
+        self._draw_chart()
 
     def _export_pdf(self) -> None:
+        try:
+            month, year = self._selected_period()
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        if self.loaded_period != (month, year):
+            self._refresh()
+            if self.loaded_period != (month, year):
+                return
         if not self.rows:
             messagebox.showinfo(
                 "Xuất báo cáo", "Không có dữ liệu để xuất.", parent=self
-            )
-            return
-        try:
-            month = int(self.month.get())
-            year = int(self.year.get().strip())
-        except ValueError:
-            hien_loi(
-                self,
-                AppError("DU_LIEU_KHONG_HOP_LE", "Năm phải là số nguyên.", "nam"),
             )
             return
         path_text = filedialog.asksaveasfilename(

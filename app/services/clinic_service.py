@@ -1,6 +1,7 @@
 import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, cast
 
 import mysql.connector
@@ -23,7 +24,6 @@ from app.errors import (
     AppError,
     app_error_from_database,
     require_identifier,
-    require_positive_int,
 )
 from app.finalized_queries import (
     Q_COMPLETE_VISIT,
@@ -31,6 +31,7 @@ from app.finalized_queries import (
     Q_MONTHLY_DOCTOR_STATISTICS,
     Q_SEARCH_PATIENTS,
 )
+from app.appointment_queries import Q_MARK_APPOINTMENT_DONE
 from app.read_queries import (
     Q_BAC_SI,
     Q_BAC_SI_THEO_MA,
@@ -45,7 +46,6 @@ from app.read_queries import (
     Q_LOCK_HO_SO_BENH_NHAN,
     Q_LOCK_PHIEU_KHAM,
     Q_LOCK_XET_NGHIEM,
-    Q_NEXT_STT_XET_NGHIEM,
     Q_UPDATE_NOI_DUNG_KHAM,
     Q_UPDATE_XET_NGHIEM,
 )
@@ -460,11 +460,25 @@ def luu_xet_nghiem(
     ket_qua: str | None,
     ngay_gio_thuc_hien: datetime | None,
     don_gia_ap_dung: Decimal | str | int,
-    stt: int | None = None,
-) -> int:
+    stt: str,
+    stt_cu: str | None = None,
+) -> str:
     _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
-    if stt is not None:
-        require_positive_int(stt, "stt", "STT xét nghiệm")
+    if not isinstance(stt, str) or re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt) is None:
+        raise AppError(
+            "DU_LIEU_KHONG_HOP_LE",
+            "STT xét nghiệm phải có định dạng từ 01 đến 99.",
+            "stt",
+        )
+    if stt_cu is not None and (
+        not isinstance(stt_cu, str)
+        or re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt_cu) is None
+    ):
+        raise AppError(
+            "DU_LIEU_KHONG_HOP_LE",
+            "STT xét nghiệm cũ không hợp lệ.",
+            "stt_cu",
+        )
     name = ten_xet_nghiem.strip() if isinstance(ten_xet_nghiem, str) else ""
     if not name:
         raise AppError(
@@ -502,9 +516,10 @@ def luu_xet_nghiem(
 
     if is_demo_mode():
         return demo_data().save_lab(
-            ma_phieu, name, result, ngay_gio_thuc_hien, price, stt
+            ma_phieu, name, result, ngay_gio_thuc_hien, price, stt, stt_cu
         )
 
+    statement = Q_UPDATE_XET_NGHIEM if stt_cu is not None else Q_INSERT_XET_NGHIEM
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
     commit_attempted = False
@@ -520,15 +535,12 @@ def luu_xet_nghiem(
                 "PHIEU_DA_HOAN_THANH",
                 "Không thể thay đổi xét nghiệm của phiếu đã hoàn thành.",
             )
-        if stt is None:
-            cursor.execute(Q_NEXT_STT_XET_NGHIEM, {"ma_phieu": ma_phieu})
-            row = cursor.fetchone()
-            next_stt = int(row["stt"])
+        if stt_cu is None:
             cursor.execute(
                 Q_INSERT_XET_NGHIEM,
                 {
                     "ma_phieu": ma_phieu,
-                    "stt": next_stt,
+                    "stt": stt,
                     "ten_xet_nghiem": name,
                     "ket_qua": result,
                     "ngay_gio_thuc_hien": ngay_gio_thuc_hien,
@@ -538,7 +550,7 @@ def luu_xet_nghiem(
         else:
             cursor.execute(
                 Q_LOCK_XET_NGHIEM,
-                {"ma_phieu": ma_phieu, "stt": stt},
+                {"ma_phieu": ma_phieu, "stt": stt_cu},
             )
             if cursor.fetchone() is None:
                 raise AppError(
@@ -550,16 +562,16 @@ def luu_xet_nghiem(
                 {
                     "ma_phieu": ma_phieu,
                     "stt": stt,
+                    "stt_cu": stt_cu,
                     "ten_xet_nghiem": name,
                     "ket_qua": result,
                     "ngay_gio_thuc_hien": ngay_gio_thuc_hien,
                     "don_gia_ap_dung": price,
                 },
             )
-            next_stt = stt
         commit_attempted = True
         connection.commit()
-        return next_stt
+        return stt
     except AppError:
         if not commit_attempted:
             _rollback(connection)
@@ -569,19 +581,19 @@ def luu_xet_nghiem(
             raise AppError(
                 "COMMIT_CHUA_XAC_DINH",
                 (
-                    f"Chưa xác định được xét nghiệm STT {stt or 'mới'} đã lưu hay chưa. "
+                    f"Chưa xác định được xét nghiệm STT {stt} đã lưu hay chưa. "
                     "Hãy tải lại chi tiết phiếu khám trước khi thao tác tiếp."
                 ),
             ) from error
         _rollback(connection)
         logger.exception("Could not save lab result for consultation %s", ma_phieu)
-        raise app_error_from_database(error, Q_INSERT_XET_NGHIEM) from error
+        raise app_error_from_database(error, statement) from error
     except Exception as error:
         if commit_attempted:
             raise AppError(
                 "COMMIT_CHUA_XAC_DINH",
                 (
-                    f"Chưa xác định được xét nghiệm STT {stt or 'mới'} đã lưu hay chưa. "
+                    f"Chưa xác định được xét nghiệm STT {stt} đã lưu hay chưa. "
                     "Hãy tải lại chi tiết phiếu khám trước khi thao tác tiếp."
                 ),
             ) from error
@@ -610,6 +622,9 @@ def hoan_thanh_phieu_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
     _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
     if is_demo_mode():
         demo_data().complete_visit(ma_phieu, ma_bac_si)
+        from app.services.appointment_service import hoan_tat_lich_demo
+
+        hoan_tat_lich_demo(ma_phieu, ma_bac_si)
         return
     connection = get_connection()
     cursor: MySQLCursorDict | None = None
@@ -633,6 +648,13 @@ def hoan_thanh_phieu_kham(ma_phieu: Identifier, ma_bac_si: Identifier) -> None:
                 "CHUA_DU_DIEU_KIEN_HOAN_THANH",
                 "Cần có chẩn đoán và hoàn tất toàn bộ kết quả xét nghiệm trước khi chốt phiếu.",
             )
+        if visit["ma_lich"] is not None:
+            cursor.execute(Q_MARK_APPOINTMENT_DONE, (visit["ma_lich"],))
+            if cursor.rowcount != 1:
+                raise AppError(
+                    "XUNG_DOT_DU_LIEU",
+                    "Không thể cập nhật lịch hẹn sau khi hoàn thành phiếu khám.",
+                )
         commit_attempted = True
         connection.commit()
     except AppError:

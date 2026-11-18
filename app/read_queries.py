@@ -215,6 +215,7 @@ Q_LICH_LAM_VIEC = """
 SELECT
     bs.MaBacSi AS ma_bac_si,
     bs.HoTen AS ten_bac_si,
+    k.TenKhoa AS ten_khoa,
     bs.PhongKham AS phong_kham,
     bs.GiaKham AS gia_kham,
     bs.TrinhDoHocVan AS trinh_do_hoc_van,
@@ -222,6 +223,7 @@ SELECT
     lw.GioBatDau AS gio_bat_dau,
     lw.GioKetThuc AS gio_ket_thuc
 FROM BacSi AS bs
+JOIN Khoa AS k ON k.MaKhoa = bs.MaKhoa
 JOIN LichLamViecBacSi AS lw ON lw.MaBacSi = bs.MaBacSi
 WHERE bs.MaKhoa = %(ma_khoa)s
 ORDER BY bs.HoTen, lw.Thu, lw.GioBatDau
@@ -306,17 +308,12 @@ Q_LOCK_PHIEU_KHAM = """
 SELECT p.MaPhieuKhamBenh AS ma_phieu,
        p.MaBacSi AS ma_bac_si,
        p.TrangThaiPhieuKham AS trang_thai,
+       p.MaLichHen AS ma_lich,
        h.MaBenhNhan AS ma_benh_nhan
 FROM PhieuKhamBenh p
 JOIN HoSoBenhAn h ON h.MaHoSo = p.MaHoSo
 WHERE p.MaPhieuKhamBenh = %(ma_phieu)s
 FOR UPDATE
-"""
-
-Q_NEXT_STT_XET_NGHIEM = """
-SELECT COALESCE(MAX(STTXetNghiem), 0) + 1 AS stt
-FROM XetNghiem
-WHERE MaPhieuKhamBenh = %(ma_phieu)s
 """
 
 Q_LOCK_XET_NGHIEM = """
@@ -338,10 +335,11 @@ VALUES
 
 Q_UPDATE_XET_NGHIEM = """
 UPDATE XetNghiem
-SET TenXetNghiem = %(ten_xet_nghiem)s,
+SET STTXetNghiem = %(stt)s,
+    TenXetNghiem = %(ten_xet_nghiem)s,
     KetQuaXetNghiem = %(ket_qua)s,
     NgayGioThucHien = %(ngay_gio_thuc_hien)s,
     DonGiaApDung = %(don_gia_ap_dung)s
 WHERE MaPhieuKhamBenh = %(ma_phieu)s
-  AND STTXetNghiem = %(stt)s
+  AND STTXetNghiem = %(stt_cu)s
 """

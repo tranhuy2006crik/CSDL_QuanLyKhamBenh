@@ -1,4 +1,4 @@
--- 00_drop_tables.sql: Script xóa sạch toàn bộ các bảng trong CSDL
+-- 00_drop_tables.sql: Xóa toàn bộ 11 bảng trong CSDL quanlykhambenh
 USE quanlykhambenh;
 
 SET FOREIGN_KEY_CHECKS = 0;
@@ -7,6 +7,7 @@ DROP TABLE IF EXISTS ChiTietDonThuoc;
 DROP TABLE IF EXISTS DonThuoc;
 DROP TABLE IF EXISTS XetNghiem;
 DROP TABLE IF EXISTS PhieuKhamBenh;
+DROP TABLE IF EXISTS LichHen;
 DROP TABLE IF EXISTS HoSoBenhAn;
 DROP TABLE IF EXISTS LichLamViecBacSi;
 DROP TABLE IF EXISTS BacSi;

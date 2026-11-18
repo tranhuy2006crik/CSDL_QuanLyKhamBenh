@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from threading import Event
 from time import monotonic, sleep
 from unittest.mock import patch
@@ -79,6 +80,7 @@ class ClinicShellTests(unittest.TestCase):
 
             self.assertEqual(view.table.heading("chuc_danh", "text"), "Chức danh")
             self.assertEqual(view.table.heading("gia_kham", "text"), "Giá khám")
+            self.assertEqual(view.table.heading("khoa", "text"), "Khoa")
             self.assertEqual(str(view.title_filter.cget("state")), "readonly")
             self.assertEqual(
                 set(view.title_filter.cget("values")),
@@ -95,8 +97,9 @@ class ClinicShellTests(unittest.TestCase):
             self.assertEqual(len(filtered_rows), 2)
             row = view.table.item(filtered_rows[0], "values")
             self.assertEqual(row[0], "Nguyễn Minh An (DEMO)")
-            self.assertEqual(row[2], "Bác sĩ chuyên khoa I (DEMO)")
-            self.assertEqual(row[3], "150.000 VNĐ")
+            self.assertEqual(row[1], "Khoa Nội (DEMO)")
+            self.assertEqual(row[3], "Bác sĩ chuyên khoa I (DEMO)")
+            self.assertEqual(row[4], "150.000 VNĐ")
         finally:
             app.destroy()
 
@@ -146,16 +149,52 @@ class ClinicShellTests(unittest.TestCase):
                 self.assertEqual(portal.grid_rowconfigure(1)["weight"], 1)
                 self.assertEqual(len(portal.appointment_view.card_lists), 3)
                 self.assertTrue(hasattr(portal.report_view, "table"))
-                self.assertFalse(hasattr(portal.report_view, "chart"))
+                self.assertTrue(hasattr(portal.report_view, "chart"))
+                report = portal.report_view
+                self.assertEqual(report.month.master.master.cget("text"), "Kỳ báo cáo")
+                self.assertFalse(hasattr(report, "period_label"))
+                self.assertEqual(
+                    int(report.month.master.master.grid_info()["row"]), 1
+                )
+                self.assertLess(
+                    int(report.table.master.grid_info()["row"]),
+                    int(report.chart.master.grid_info()["row"]),
+                )
+                report.rows = [
+                    {
+                        "ma_bac_si": "BS001",
+                        "ten_bac_si": "Nguyễn Hoàng Minh",
+                        "so_luot_kham": 1,
+                        "so_benh_nhan": 1,
+                        "gia_kham": Decimal("150000"),
+                        "gia_xet_nghiem": Decimal("90000"),
+                        "gia_thuoc": Decimal("60000"),
+                        "tong_gia_tri": Decimal("300000"),
+                    }
+                ]
+                report._draw_chart()
+                horizontal_bars = [
+                    report.chart.coords(item)
+                    for item in report.chart.find_all()
+                    if report.chart.type(item) == "rectangle"
+                    and (
+                        report.chart.coords(item)[2]
+                        - report.chart.coords(item)[0]
+                        >
+                        report.chart.coords(item)[3]
+                        - report.chart.coords(item)[1]
+                    )
+                ]
+                self.assertTrue(horizontal_bars)
                 portal.destroy()
         finally:
             app.destroy()
 
-    def test_cancel_dialog_requires_reason_and_returns_submitted_reason(self) -> None:
+    def test_cancel_dialog_confirms_without_requesting_a_reason(self) -> None:
         app = ClinicApp(demo_mode=True)
         try:
             appointment = {
-                "ma_lich": 1,
+                "ma_lich": "LH001",
                 "ma_benh_nhan": "BN001",
                 "ten_benh_nhan": "Bệnh nhân A",
                 "ma_bac_si": "BS001",
@@ -163,22 +202,14 @@ class ClinicShellTests(unittest.TestCase):
                 "ten_khoa": "Khoa Nội",
                 "bat_dau": datetime(2026, 11, 9, 8, 0),
                 "ket_thuc": datetime(2026, 11, 9, 8, 30),
-                "trang_thai": "CONFIRMED",
-                "da_an": False,
-                "ly_do_huy": None,
+                "trang_thai": "CHO_KHAM",
                 "ma_phieu_kham": None,
-                "tao_luc": datetime(2026, 11, 8, 8, 0),
-                "cap_nhat_luc": datetime(2026, 11, 8, 8, 0),
             }
             dialog = CancelAppointmentDialog(app, appointment)
             app.update_idletasks()
             dialog._submit()
-            self.assertIsNone(dialog.result)
-            self.assertTrue(dialog.winfo_exists())
-
-            dialog.reason.insert("1.0", "Thay đổi kế hoạch")
-            dialog._submit()
-            self.assertEqual(dialog.result, "Thay đổi kế hoạch")
+            self.assertTrue(dialog.result)
+            self.assertFalse(dialog.winfo_exists())
         finally:
             app.destroy()
 
@@ -294,18 +325,18 @@ class ClinicShellTests(unittest.TestCase):
 
             view._select_appointment(str(appointment["ma_lich"]))
             with patch(
-                "app.ui.views.appointment_views._ask_cancel_reason",
-                return_value="Thay đổi kế hoạch",
+                "app.ui.views.appointment_views._ask_cancel_confirmation",
+                return_value=True,
             ):
                 view._cancel()
                 self._wait_until(
                     app,
                     lambda: lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"]
-                    == "CANCELLED",
+                    == "DA_HUY",
                 )
             self.assertEqual(
                 lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"],
-                "CANCELLED",
+                "DA_HUY",
             )
         finally:
             app._close()

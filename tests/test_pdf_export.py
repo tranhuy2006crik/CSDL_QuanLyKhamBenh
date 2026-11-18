@@ -5,12 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.pdf_export import xuat_bang_pdf, xuat_bao_cao_phieu_kham_pdf
-from app.doctor_report_pdf import (
-    _build_horizontal_bar_charts,
-    xuat_bao_cao_bac_si_pdf,
-)
-from reportlab.graphics.shapes import Rect, String
-from reportlab.lib import colors
+from app.doctor_report_pdf import xuat_bao_cao_bac_si_pdf
 
 
 class PdfExportTests(unittest.TestCase):
@@ -77,43 +72,6 @@ class PdfExportTests(unittest.TestCase):
             self.assertTrue(output_path.read_bytes().startswith(b"%PDF-"))
             self.assertIn(b"NotoSans", output_path.read_bytes())
 
-    def test_builds_paired_horizontal_bars_and_splits_large_reports(self) -> None:
-        rows = [
-            {
-                "ten_bac_si": f"Bác sĩ {doctor_id}",
-                "so_luot_kham": doctor_id,
-                "tong_gia_tri": Decimal(doctor_id * 1000),
-            }
-            for doctor_id in range(9)
-        ]
-
-        charts = _build_horizontal_bar_charts(rows, 700)
-
-        self.assertEqual(len(charts), 3)
-        self.assertLess(charts[0].height, 150)
-        labels = [
-            shape.text
-            for chart in charts
-            for shape in chart.contents
-            if isinstance(shape, String)
-        ]
-        self.assertIn("Bác sĩ 0", labels)
-        self.assertIn("Bác sĩ 8", labels)
-        self.assertTrue(any("Số lượt khám" in label for label in labels))
-        self.assertTrue(any("Tổng giá trị ghi nhận" in label for label in labels))
-        colored_bars = [
-            shape
-            for chart in charts
-            for shape in chart.contents
-            if isinstance(shape, Rect)
-            and (
-                shape.fillColor == colors.HexColor("#168AAD")
-                or shape.fillColor == colors.HexColor("#E58A2B")
-            )
-            and shape.width > 8
-        ]
-        self.assertEqual(len(colored_bars), 16)
-
     def test_exports_vietnamese_visit_report_with_completed_data(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / "ket_qua_kham.pdf"
@@ -133,7 +91,7 @@ class PdfExportTests(unittest.TestCase):
                     },
                     "ds_xet_nghiem": [
                         {
-                            "stt": 1,
+                            "stt": "01",
                             "ten_xet_nghiem": "Công thức máu",
                             "ket_qua": "Bình thường",
                             "ngay_gio_thuc_hien": datetime(2026, 10, 30, 9, 30),

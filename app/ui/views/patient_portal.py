@@ -301,6 +301,7 @@ class DoctorScheduleView(ttk.Frame):
         table_frame.columnconfigure(0, weight=1)
         columns = (
             "bac_si",
+            "khoa",
             "phong",
             "chuc_danh",
             "gia_kham",
@@ -313,6 +314,7 @@ class DoctorScheduleView(ttk.Frame):
             columns,
             {
                 "bac_si": "Bác sĩ",
+                "khoa": "Khoa",
                 "phong": "Phòng khám",
                 "chuc_danh": "Chức danh",
                 "gia_kham": "Giá khám",
@@ -322,6 +324,7 @@ class DoctorScheduleView(ttk.Frame):
             },
             {
                 "bac_si": 190,
+                "khoa": 150,
                 "phong": 120,
                 "chuc_danh": 180,
                 "gia_kham": 130,
@@ -416,6 +419,7 @@ class DoctorScheduleView(ttk.Frame):
                 iid=f"{row['ma_bac_si']}-{index}",
                 values=(
                     row["ten_bac_si"],
+                    row["ten_khoa"],
                     row["phong_kham"] or "—",
                     row.get("trinh_do_hoc_van") or "—",
                     dinh_dang_tien(row["gia_kham"]),

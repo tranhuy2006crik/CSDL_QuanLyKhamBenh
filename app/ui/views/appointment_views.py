@@ -8,7 +8,6 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from app.contracts import (
-    AppointmentStatus,
     BacSiDTO,
     BenhNhanDTO,
     Identifier,
@@ -16,33 +15,25 @@ from app.contracts import (
 )
 from app.errors import AppError
 from app.services.appointment_service import (
-    cap_nhat_trang_thai,
-    an_lich_da_xu_ly,
     cac_khung_gio_trong_ngay,
     dat_lich,
     doi_lich,
-    gan_phieu_vao_lich,
     huy_lich,
-    hien_lich_da_an,
     lich_theo_bac_si,
     lich_theo_benh_nhan,
 )
 from app.services.clinic_service import (
     lay_danh_sach_bac_si,
     lay_khoa,
-    tim_phieu_dang_kham,
 )
-from app.services.tra_cuu_service import lay_chi_tiet_lan_kham
 from app.ui.views.common import hien_loi
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
 
 
 STATUS_LABELS = {
-    "CONFIRMED": "Chờ khám",
-    "ARRIVED": "Đã đến",
-    "COMPLETED": "Đã khám",
-    "NO_SHOW": "Vắng mặt",
-    "CANCELLED": "Đã hủy",
+    "CHO_KHAM": "Chờ khám",
+    "DA_KHAM": "Đã khám",
+    "DA_HUY": "Đã hủy",
 }
 
 
@@ -320,9 +311,8 @@ class CancelAppointmentDialog(tk.Toplevel):
         self.geometry("520x340")
         self.minsize(460, 300)
         self.transient(parent.winfo_toplevel())
-        self.result: str | None = None
+        self.result = False
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
 
         ttk.Label(
             self,
@@ -341,15 +331,12 @@ class CancelAppointmentDialog(tk.Toplevel):
         ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 12))
         ttk.Label(
             self,
-            text="Lý do hủy lịch *",
+            text="Bạn có chắc chắn muốn hủy lịch hẹn này không?",
             font=("Segoe UI", 10, "bold"),
-        ).grid(row=2, column=0, sticky="w", padx=16)
-        self.reason = tk.Text(self, height=5, wrap="word")
-        self.reason.grid(row=3, column=0, sticky="nsew", padx=16, pady=6)
-        self.error = ttk.Label(self, text="", foreground="#C0392B")
-        self.error.grid(row=4, column=0, sticky="w", padx=16)
+            wraplength=480,
+        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 10))
         actions = ttk.Frame(self, padding=16)
-        actions.grid(row=5, column=0, sticky="ew")
+        actions.grid(row=3, column=0, sticky="ew")
         ttk.Button(
             actions,
             text="Quay lại",
@@ -364,21 +351,15 @@ class CancelAppointmentDialog(tk.Toplevel):
         ).pack(side="right", padx=(0, 8))
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
-        self.reason.focus_set()
 
     def _submit(self) -> None:
-        reason = self.reason.get("1.0", "end").strip()
-        if not reason:
-            self.error.configure(text="Vui lòng nhập lý do hủy lịch.")
-            self.reason.focus_set()
-            return
-        self.result = reason
+        self.result = True
         self.destroy()
 
 
-def _ask_cancel_reason(
+def _ask_cancel_confirmation(
     parent: tk.Misc, appointment: LichHenDTO
-) -> str | None:
+) -> bool:
     dialog = CancelAppointmentDialog(parent, appointment)
     parent.wait_window(dialog)
     return dialog.result
@@ -400,7 +381,6 @@ class PatientAppointmentView(ttk.Frame):
         self.appointments: dict[str, LichHenDTO] = {}
         self.appointment_cards: dict[str, AppointmentCard] = {}
         self.selected_appointment_id: str | None = None
-        self.show_hidden = tk.BooleanVar(value=False)
         self._background_results: queue.Queue[
             tuple[str, int, Any, Exception | None]
         ] = queue.Queue()
@@ -427,9 +407,8 @@ class PatientAppointmentView(ttk.Frame):
             self,
             text=(
                 "Lịch hẹn xác nhận ngay khi đặt thành công; mỗi lượt 30 phút, "
-                "tối đa một lịch hoạt động mỗi ngày và chỉ đặt trong 30 ngày tới. "
-                "Lịch chỉ nằm trong RAM phiên chạy, đóng ứng dụng sẽ mất và "
-                "không đồng bộ với máy khác."
+                "mỗi bệnh nhân chỉ có một lịch hoạt động với cùng bác sĩ trong ngày "
+                "và chỉ đặt trong 30 ngày tới. Lịch được lưu trong cơ sở dữ liệu."
             ),
             wraplength=1100,
             justify="left",
@@ -501,20 +480,6 @@ class PatientAppointmentView(ttk.Frame):
             text="Tải lại lịch",
             command=self._refresh_appointments,
         ).pack(side="left")
-        self.hide_button = ttk.Button(
-            appointment_actions,
-            text="Ẩn lịch đã xử lý",
-            command=self._toggle_hidden,
-            state="disabled",
-            style="Secondary.TButton",
-        )
-        self.hide_button.pack(side="left", padx=8)
-        ttk.Checkbutton(
-            appointment_actions,
-            text="Hiện lịch đã ẩn",
-            variable=self.show_hidden,
-            command=self._refresh_appointments,
-        ).pack(side="right")
         self.appointment_list = ScrollableFrame(appointments_frame, height=135)
         self.appointment_list.grid(row=1, column=0, sticky="nsew")
 
@@ -590,7 +555,7 @@ class PatientAppointmentView(ttk.Frame):
         active = (
             not busy
             and appointment is not None
-            and appointment["trang_thai"] == "CONFIRMED"
+            and appointment["trang_thai"] == "CHO_KHAM"
             and datetime.now() < appointment["bat_dau"]
         )
         state = "normal" if active else "disabled"
@@ -692,7 +657,7 @@ class PatientAppointmentView(ttk.Frame):
             appointment = self._selected_appointment()
             if (
                 appointment is not None
-                and appointment["trang_thai"] == "CONFIRMED"
+                and appointment["trang_thai"] == "CHO_KHAM"
                 and datetime.now() < appointment["bat_dau"]
                 and appointment["ma_bac_si"] != doctor["ma_bac_si"]
             ):
@@ -893,8 +858,7 @@ class PatientAppointmentView(ttk.Frame):
         appointment = self._selected_appointment()
         if appointment is None:
             return
-        reason = _ask_cancel_reason(self, appointment)
-        if reason is None:
+        if not _ask_cancel_confirmation(self, appointment):
             return
         self._set_mutation_busy(True)
 
@@ -915,7 +879,6 @@ class PatientAppointmentView(ttk.Frame):
                 appointment["ma_lich"],
                 "patient",
                 self.patient["ma_benh_nhan"],
-                reason,
             ),
             cancelled,
             failed,
@@ -927,26 +890,13 @@ class PatientAppointmentView(ttk.Frame):
             card.set_selected(key == self.selected_appointment_id)
         active = (
             appointment is not None
-            and appointment["trang_thai"] == "CONFIRMED"
+            and appointment["trang_thai"] == "CHO_KHAM"
             and datetime.now() < appointment["bat_dau"]
             and not self._mutation_in_progress
         )
         state = "normal" if active else "disabled"
         self.reschedule_button.configure(state=state)
         self.cancel_button.configure(state=state)
-        self.hide_button.configure(
-            text="Khôi phục lịch" if appointment and appointment["da_an"] else "Ẩn lịch đã xử lý",
-            state=(
-                "normal"
-                if appointment
-                and (
-                    appointment["da_an"]
-                    or appointment["trang_thai"]
-                    in {"COMPLETED", "NO_SHOW", "CANCELLED"}
-                )
-                else "disabled"
-            ),
-        )
         if appointment is None:
             return
         self.booking_date.set_date(appointment["bat_dau"].date(), notify=False)
@@ -997,10 +947,7 @@ class PatientAppointmentView(ttk.Frame):
 
     def _refresh_appointments(self) -> None:
         try:
-            rows = lich_theo_benh_nhan(
-                self.patient["ma_benh_nhan"],
-                bao_gom_da_an=self.show_hidden.get(),
-            )
+            rows = lich_theo_benh_nhan(self.patient["ma_benh_nhan"])
         except Exception as error:
             hien_loi(self, error)
             return
@@ -1019,22 +966,16 @@ class PatientAppointmentView(ttk.Frame):
                 f'Bác sĩ: {row["ten_bac_si"]} · Khoa: {row["ten_khoa"]}',
                 f'{_format_datetime(row["bat_dau"])}–{row["ket_thuc"]:%H:%M}',
             ]
-            if row["ly_do_huy"]:
-                details.append(f'Lý do hủy: {row["ly_do_huy"]}')
-            if row["da_an"]:
-                details.append("Lịch đang được ẩn")
             card = AppointmentCard(
                 self.appointment_list.content,
-                f'Mã lịch {row["ma_lich"]}',
+                "Lịch hẹn",
                 tuple(details),
                 lambda current=key: self._select_appointment(current),
                 status=STATUS_LABELS[row["trang_thai"]],
                 status_color={
-                    "CONFIRMED": "#8A5A00",
-                    "ARRIVED": "#1677A5",
-                    "COMPLETED": "#1F7A3D",
-                    "NO_SHOW": "#B42318",
-                    "CANCELLED": "#B42318",
+                    "CHO_KHAM": "#8A5A00",
+                    "DA_KHAM": "#1F7A3D",
+                    "DA_HUY": "#B42318",
                 }[row["trang_thai"]],
             )
             card.pack(fill="x", padx=5, pady=4)
@@ -1047,40 +988,17 @@ class PatientAppointmentView(ttk.Frame):
             ).pack(anchor="w", padx=8, pady=10)
         self._appointment_selected()
 
-    def _toggle_hidden(self) -> None:
-        appointment = self._selected_appointment()
-        if appointment is None:
-            return
-        try:
-            if appointment["da_an"]:
-                hien_lich_da_an(
-                    appointment["ma_lich"],
-                    "patient",
-                    self.patient["ma_benh_nhan"],
-                )
-            else:
-                an_lich_da_xu_ly(
-                    appointment["ma_lich"],
-                    "patient",
-                    self.patient["ma_benh_nhan"],
-                )
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self._refresh_appointments()
-
 
 class DoctorAppointmentView(ttk.Frame):
     def __init__(self, parent: tk.Misc, doctor: BacSiDTO) -> None:
         super().__init__(parent, padding=12)
         self.doctor = doctor
         self.appointments: dict[str, LichHenDTO] = {}
-        self.show_hidden = tk.BooleanVar(value=False)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
         ttk.Label(
             self,
-            text="Lịch hẹn trong phiên chạy",
+            text="Lịch hẹn",
             font=("TkDefaultFont", 16, "bold"),
         ).grid(row=0, column=0, sticky="w")
         controls = ttk.Frame(self)
@@ -1095,10 +1013,7 @@ class DoctorAppointmentView(ttk.Frame):
         self.selected_date.pack(side="left", padx=5)
         ttk.Label(
             self,
-            text=(
-                "Chỉ hiển thị lịch gắn với bác sĩ đang đăng nhập. Dữ liệu lưu tạm "
-                "trong RAM, không đồng bộ giữa các máy."
-            ),
+            text="Lịch được lưu trong cơ sở dữ liệu và chỉ hiển thị lịch của bác sĩ đang đăng nhập.",
             wraplength=1000,
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 8))
 
@@ -1108,9 +1023,9 @@ class DoctorAppointmentView(ttk.Frame):
         self.cards: dict[str, AppointmentCard] = {}
         self.card_lists: dict[str, ScrollableFrame] = {}
         self.status_groups = {
-            "waiting": ("Chờ khám", {"CONFIRMED", "ARRIVED"}),
-            "done": ("Đã khám", {"COMPLETED"}),
-            "processed": ("Đã hủy / Vắng mặt", {"CANCELLED", "NO_SHOW"}),
+            "waiting": ("Chờ khám", {"CHO_KHAM"}),
+            "done": ("Đã khám", {"DA_KHAM"}),
+            "cancelled": ("Đã hủy", {"DA_HUY"}),
         }
         for key, (title, _statuses) in self.status_groups.items():
             cards = ScrollableFrame(self.status_tabs, height=360)
@@ -1121,30 +1036,14 @@ class DoctorAppointmentView(ttk.Frame):
 
         actions = ttk.Frame(self)
         actions.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        self.arrived_button = ttk.Button(
-            actions,
-            text="Ghi nhận đã đến",
-            command=lambda: self._update_status("ARRIVED"),
-            state="disabled",
-            style="Info.TButton",
-        )
-        self.arrived_button.pack(side="left")
         self.completed_button = ttk.Button(
             actions,
-            text="Tạo phiếu khám và hoàn tất",
+            text="Tạo / mở phiếu khám",
             command=self._complete_visit,
             state="disabled",
             style="Success.TButton",
         )
-        self.completed_button.pack(side="left", padx=6)
-        self.no_show_button = ttk.Button(
-            actions,
-            text="Đánh dấu vắng mặt",
-            command=lambda: self._update_status("NO_SHOW"),
-            state="disabled",
-            style="Danger.TButton",
-        )
-        self.no_show_button.pack(side="left")
+        self.completed_button.pack(side="left")
         self.cancel_button = ttk.Button(
             actions,
             text="Hủy lịch",
@@ -1153,20 +1052,6 @@ class DoctorAppointmentView(ttk.Frame):
             style="Danger.TButton",
         )
         self.cancel_button.pack(side="left", padx=6)
-        self.hide_button = ttk.Button(
-            actions,
-            text="Ẩn lịch đã xử lý",
-            command=self._toggle_hidden,
-            state="disabled",
-            style="Secondary.TButton",
-        )
-        self.hide_button.pack(side="left", padx=6)
-        ttk.Checkbutton(
-            actions,
-            text="Hiện lịch đã ẩn",
-            variable=self.show_hidden,
-            command=self._refresh,
-        ).pack(side="right")
         self._refresh()
 
     def _selected_appointment(self) -> LichHenDTO | None:
@@ -1184,22 +1069,7 @@ class DoctorAppointmentView(ttk.Frame):
             rows = lich_theo_bac_si(
                 self.doctor["ma_bac_si"],
                 selected_date,
-                bao_gom_da_an=self.show_hidden.get(),
             )
-            for row in rows:
-                if row["trang_thai"] == "ARRIVED" and row["ma_phieu_kham"]:
-                    detail = lay_chi_tiet_lan_kham(
-                        row["ma_phieu_kham"], "doctor", self.doctor["ma_bac_si"]
-                    )
-                    if detail["thong_tin"]["trang_thai"] == "HOAN_THANH":
-                        row.update(
-                            cap_nhat_trang_thai(
-                                row["ma_lich"],
-                                self.doctor["ma_bac_si"],
-                                "COMPLETED",
-                                ma_phieu_kham=row["ma_phieu_kham"],
-                            )
-                        )
         except Exception as error:
             hien_loi(self, error)
             return
@@ -1222,15 +1092,11 @@ class DoctorAppointmentView(ttk.Frame):
             )
             details = [
                 f'{_format_datetime(row["bat_dau"])} – {_format_datetime(row["ket_thuc"])}',
-                f'Mã lịch: {row["ma_lich"]} · Mã bệnh nhân: {row["ma_benh_nhan"]}',
+                f'Mã bệnh nhân: {row["ma_benh_nhan"]}',
                 f'Trạng thái: {STATUS_LABELS[row["trang_thai"]]}',
             ]
             if row["ma_phieu_kham"]:
                 details.append(f'Phiếu khám liên kết: {row["ma_phieu_kham"]}')
-            if row["ly_do_huy"]:
-                details.append(f'Lý do hủy: {row["ly_do_huy"]}')
-            if row["da_an"]:
-                details.append("Lịch đang được ẩn")
             card = AppointmentCard(
                 self.card_lists[group].content,
                 f'{row["ten_benh_nhan"]} ({row["ma_benh_nhan"]})',
@@ -1263,30 +1129,18 @@ class DoctorAppointmentView(ttk.Frame):
             card.set_selected(key == self.selected_appointment_id)
         status = appointment["trang_thai"] if appointment else ""
         now = datetime.now()
-        self.arrived_button.configure(
+        self.completed_button.configure(
             state=(
                 "normal"
                 if appointment
-                and status == "CONFIRMED"
-                and appointment["bat_dau"].date() == date.today()
-                and now < appointment["ket_thuc"]
-                else "disabled"
-            )
-        )
-        self.completed_button.configure(
-            state="normal" if status == "ARRIVED" else "disabled"
-        )
-        self.no_show_button.configure(
-            state=(
-                "normal"
-                if appointment and status == "CONFIRMED" and now >= appointment["ket_thuc"]
+                and (status == "CHO_KHAM" or appointment["ma_phieu_kham"])
                 else "disabled"
             )
         )
         self.cancel_button.configure(
             state=(
                 "normal"
-                if appointment and status == "CONFIRMED" and now < appointment["bat_dau"]
+                if appointment and status == "CHO_KHAM" and now < appointment["bat_dau"]
                 else "disabled"
             )
         )
@@ -1294,47 +1148,16 @@ class DoctorAppointmentView(ttk.Frame):
             text=(
                 "Mở phiếu khám"
                 if appointment and appointment["ma_phieu_kham"]
-                else "Tạo / tiếp tục phiếu khám"
+                else "Tiếp nhận / tạo phiếu khám"
             )
         )
-        self.hide_button.configure(
-            text="Khôi phục lịch" if appointment and appointment["da_an"] else "Ẩn lịch đã xử lý",
-            state=(
-                "normal"
-                if appointment
-                and (
-                    appointment["da_an"]
-                    or status in {"COMPLETED", "NO_SHOW", "CANCELLED"}
-                )
-                else "disabled"
-            ),
-        )
-
-    def _update_status(self, new_status: AppointmentStatus) -> None:
-        appointment = self._selected_appointment()
-        if appointment is None:
-            return
-        try:
-            cap_nhat_trang_thai(
-                appointment["ma_lich"],
-                self.doctor["ma_bac_si"],
-                new_status,
-            )
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self._refresh()
 
     def _complete_visit(self) -> None:
         appointment = self._selected_appointment()
         if appointment is None:
             return
-        try:
-            visit_id = appointment["ma_phieu_kham"] or tim_phieu_dang_kham(
-                appointment["ma_benh_nhan"], appointment["ma_bac_si"]
-            )
-        except Exception as error:
-            hien_loi(self, error)
+        visit_id = appointment["ma_phieu_kham"]
+        if visit_id is None and appointment["trang_thai"] != "CHO_KHAM":
             return
         if visit_id is None:
             dialog = TaoPhieuKhamDialog(
@@ -1342,18 +1165,12 @@ class DoctorAppointmentView(ttk.Frame):
                 appointment["ma_benh_nhan"],
                 appointment["ma_bac_si"],
                 appointment["ten_benh_nhan"],
+                ma_lich_hen=appointment["ma_lich"],
             )
             self.wait_window(dialog)
             visit_id = dialog.result
             if visit_id is None:
                 return
-        try:
-            gan_phieu_vao_lich(
-                appointment["ma_lich"], self.doctor["ma_bac_si"], visit_id
-            )
-        except Exception as error:
-            hien_loi(self, error)
-            return
         PhieuKhamDetailDialog(
             self,
             visit_id,
@@ -1363,37 +1180,17 @@ class DoctorAppointmentView(ttk.Frame):
         )
         self._refresh()
 
-    def _toggle_hidden(self) -> None:
-        appointment = self._selected_appointment()
-        if appointment is None:
-            return
-        try:
-            if appointment["da_an"]:
-                hien_lich_da_an(
-                    appointment["ma_lich"], "doctor", self.doctor["ma_bac_si"]
-                )
-            else:
-                an_lich_da_xu_ly(
-                    appointment["ma_lich"], "doctor", self.doctor["ma_bac_si"]
-                )
-        except Exception as error:
-            hien_loi(self, error)
-            return
-        self._refresh()
-
     def _cancel(self) -> None:
         appointment = self._selected_appointment()
         if appointment is None:
             return
-        reason = _ask_cancel_reason(self, appointment)
-        if reason is None:
+        if not _ask_cancel_confirmation(self, appointment):
             return
         try:
             huy_lich(
                 appointment["ma_lich"],
                 "doctor",
                 self.doctor["ma_bac_si"],
-                reason,
             )
         except Exception as error:
             hien_loi(self, error)

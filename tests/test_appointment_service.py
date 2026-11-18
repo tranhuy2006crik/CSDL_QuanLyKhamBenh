@@ -1,9 +1,8 @@
-from copy import deepcopy
 from datetime import date, datetime, time, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event, Thread
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.demo_data import (
     DEMO_DOCTOR_ID,
@@ -14,20 +13,23 @@ from app.demo_data import (
     is_demo_mode,
 )
 from app.errors import AppError
+from app.appointment_queries import Q_INSERT_VISIT_FROM_APPOINTMENT
 from app.services import appointment_service
-from app.services.clinic_service import hoan_thanh_phieu_kham, tao_phieu_kham
+from app.services.clinic_service import (
+    hoan_thanh_phieu_kham,
+    luu_noi_dung_kham,
+)
 from app.services.appointment_service import (
-    cap_nhat_trang_thai,
     cac_khung_gio_trong_ngay,
     dat_lich,
     doi_lich,
-    gan_phieu_vao_lich,
     gio_con_trong,
     gio_trong_30_ngay,
     huy_lich,
     lich_theo_bac_si,
     lich_theo_benh_nhan,
     reset_appointment_sessions,
+    tao_phieu_kham_tu_lich,
 )
 
 
@@ -81,26 +83,21 @@ class AppointmentServiceTests(unittest.TestCase):
             [booked["ma_lich"]],
         )
 
-    def test_cancel_releases_slot_and_requires_a_reason(self) -> None:
+    def test_cancel_releases_slot_without_reason_column(self) -> None:
         booking_date = self._next_workday()
         slot = self._next_slot(booking_date)
         appointment = dat_lich(
             DEMO_PATIENT_ID, "Bệnh nhân A", DEMO_DOCTOR_ID, slot
         )
 
-        with self.assertRaises(AppError) as missing_reason:
-            huy_lich(appointment["ma_lich"], "patient", DEMO_PATIENT_ID, " ")
-        self.assertEqual(missing_reason.exception.code, "DU_LIEU_KHONG_HOP_LE")
-
         huy_lich(
             appointment["ma_lich"],
             "patient",
             DEMO_PATIENT_ID,
-            "Không thể đến khám",
         )
         self.assertIn(slot, gio_con_trong(DEMO_DOCTOR_ID, booking_date))
         self.assertEqual(
-            lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"], "CANCELLED"
+            lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"], "DA_HUY"
         )
 
     def test_calendar_slots_include_available_and_booked_statuses(self) -> None:
@@ -198,6 +195,7 @@ class AppointmentServiceTests(unittest.TestCase):
             DEMO_PATIENT_ID, "Bệnh nhân A", DEMO_DOCTOR_ID, original_slot
         )
         lock_was_available = Event()
+        original_schedule_lookup = appointment_service._doctor_and_schedule
 
         def verify_lock_available(*_args, **_kwargs):
             def acquire_from_another_thread() -> None:
@@ -209,11 +207,11 @@ class AppointmentServiceTests(unittest.TestCase):
             thread = Thread(target=acquire_from_another_thread)
             thread.start()
             thread.join(timeout=1.5)
-            return [new_slot]
+            return original_schedule_lookup(*_args, **_kwargs)
 
         with patch.object(
             appointment_service,
-            "gio_con_trong",
+            "_doctor_and_schedule",
             side_effect=verify_lock_available,
         ):
             updated = doi_lich(
@@ -223,65 +221,78 @@ class AppointmentServiceTests(unittest.TestCase):
         self.assertTrue(lock_was_available.is_set())
         self.assertEqual(updated["bat_dau"], new_slot)
 
-    def test_doctor_status_transitions_and_ownership(self) -> None:
-        booking_date = date.today()
-        appointment_start = datetime.combine(booking_date, time(10))
-        appointment = {
-            "ma_lich": 1,
-            "ma_benh_nhan": DEMO_PATIENT_ID,
-            "ten_benh_nhan": "Bệnh nhân A",
-            "ma_bac_si": DEMO_DOCTOR_ID,
-            "ten_bac_si": "Bác sĩ demo",
-            "ten_khoa": "Khoa demo",
-            "bat_dau": appointment_start,
-            "ket_thuc": appointment_start + timedelta(minutes=30),
-            "trang_thai": "CONFIRMED",
-            "ly_do_huy": None,
-            "ma_phieu_kham": None,
-            "tao_luc": appointment_start - timedelta(days=1),
-            "cap_nhat_luc": appointment_start - timedelta(days=1),
-        }
-        appointment_service._session().append(appointment)
+    def test_appointment_is_marked_done_only_after_linked_visit_completes(self) -> None:
+        booking_date = self._next_workday()
+        appointment = dat_lich(
+            DEMO_PATIENT_ID,
+            "Bệnh nhân A",
+            DEMO_DOCTOR_ID,
+            self._next_slot(booking_date),
+        )
+        tao_phieu_kham_tu_lich(
+            "PK123",
+            appointment["ma_lich"],
+            DEMO_DOCTOR_ID,
+            "Triệu chứng",
+        )
+        self.assertEqual(
+            lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]["trang_thai"], "CHO_KHAM"
+        )
 
-        class FrozenDateTime(datetime):
-            current = appointment_start - timedelta(minutes=5)
+        luu_noi_dung_kham("PK123", "Triệu chứng", "Chẩn đoán")
+        hoan_thanh_phieu_kham("PK123", DEMO_DOCTOR_ID)
 
-            @classmethod
-            def now(cls, tz=None):
-                return cls.current
+        updated = lich_theo_benh_nhan(DEMO_PATIENT_ID)[0]
+        self.assertEqual(updated["trang_thai"], "DA_KHAM")
+        self.assertEqual(updated["ma_phieu_kham"], "PK123")
 
-        with patch.object(appointment_service, "datetime", FrozenDateTime):
-            with self.assertRaises(AppError) as wrong_doctor:
-                cap_nhat_trang_thai(1, DEMO_DOCTOR_ID + 1, "ARRIVED")
-            self.assertEqual(wrong_doctor.exception.code, "KHONG_DU_QUYEN")
+    def test_mysql_visit_creation_links_appointment_and_saves_diagnosis(self) -> None:
+        cursor = Mock()
+        cursor.fetchone.side_effect = [
+            {
+                "ma_bac_si": 3,
+                "ma_benh_nhan": 5,
+                "ma_ho_so": 20,
+                "trang_thai": "CHO_KHAM",
+            },
+            {"gia_kham": 150000},
+        ]
 
-            arrived = cap_nhat_trang_thai(1, DEMO_DOCTOR_ID, "ARRIVED")
-            self.assertEqual(arrived["trang_thai"], "ARRIVED")
-            with self.assertRaises(AppError):
-                cap_nhat_trang_thai(1, DEMO_DOCTOR_ID, "NO_SHOW")
-            with self.assertRaises(AppError):
-                cap_nhat_trang_thai(1, DEMO_DOCTOR_ID, "COMPLETED")
-
-            tao_phieu_kham(
-                970123, DEMO_PATIENT_ID, DEMO_DOCTOR_ID, "Triệu chứng", "Chẩn đoán"
+        with (
+            patch(
+                "app.services.appointment_service.is_demo_mode",
+                return_value=False,
+            ),
+            patch(
+                "app.services.appointment_service._transaction",
+                side_effect=lambda operation, _statement: operation(cursor),
+            ),
+        ):
+            tao_phieu_kham_tu_lich(
+                "PK001",
+                "LH001",
+                3,
+                "Triệu chứng",
+                chan_doan="Chẩn đoán",
             )
-            gan_phieu_vao_lich(1, DEMO_DOCTOR_ID, 970123)
-            hoan_thanh_phieu_kham(970123, DEMO_DOCTOR_ID)
-            completed = cap_nhat_trang_thai(
-                1, DEMO_DOCTOR_ID, "COMPLETED", ma_phieu_kham=970123
-            )
-            self.assertEqual(completed["trang_thai"], "COMPLETED")
-            self.assertEqual(completed["ma_phieu_kham"], 970123)
-            with self.assertRaises(AppError):
-                cap_nhat_trang_thai(1, DEMO_DOCTOR_ID, "ARRIVED")
 
-            no_show_appointment = deepcopy(appointment)
-            no_show_appointment["ma_lich"] = 2
-            no_show_appointment["trang_thai"] = "CONFIRMED"
-            appointment_service._session().append(no_show_appointment)
-            FrozenDateTime.current = appointment_start + timedelta(minutes=31)
-            absent = cap_nhat_trang_thai(2, DEMO_DOCTOR_ID, "NO_SHOW")
-            self.assertEqual(absent["trang_thai"], "NO_SHOW")
+        insert = next(
+            item
+            for item in cursor.execute.call_args_list
+            if item.args[0] == Q_INSERT_VISIT_FROM_APPOINTMENT
+        )
+        self.assertEqual(
+            insert.args[1],
+            (
+                "PK001",
+                3,
+                20,
+                "LH001",
+                "Chẩn đoán",
+                "Triệu chứng",
+                150000,
+            ),
+        )
 
     def test_booking_rejects_dates_beyond_horizon(self) -> None:
         invalid_date = date.today() + timedelta(days=31)
@@ -395,6 +406,7 @@ class AppointmentServiceTests(unittest.TestCase):
         schedule = {
             "ma_bac_si": 7,
             "ten_bac_si": "Bác sĩ thật",
+            "ten_khoa": "Khoa thật",
             "phong_kham": "P.1",
             "thu": weekday_names[real_date.weekday()],
             "gio_bat_dau": timedelta(hours=8),
@@ -409,10 +421,20 @@ class AppointmentServiceTests(unittest.TestCase):
             patch.object(
                 appointment_service, "_department_name", return_value="Khoa thật"
             ),
+            patch.object(appointment_service, "_read", return_value=[]),
+            patch.object(
+                appointment_service,
+                "_transaction",
+                side_effect=lambda operation, _statement: operation(cursor),
+            ),
         ):
+            cursor = Mock()
+            cursor.fetchall.return_value = []
+            cursor.fetchone.return_value = None
+            cursor.rowcount = 1
             real_slot = gio_con_trong(7, real_date)[0]
-            dat_lich(70, "Bệnh nhân thật", 7, real_slot)
-            self.assertEqual(len(lich_theo_benh_nhan(70)), 1)
+            real_appointment = dat_lich(70, "Bệnh nhân thật", 7, real_slot)
+            self.assertEqual(real_appointment["ma_benh_nhan"], 70)
             self.assertFalse(is_demo_mode())
 
         enable_demo_mode()

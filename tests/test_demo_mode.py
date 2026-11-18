@@ -72,8 +72,9 @@ class DemoModeTests(unittest.TestCase):
                     None,
                     None,
                     "12500",
+                    "01",
                 ),
-                1,
+                "01",
             )
             saved = luu_don_thuoc(
                 970003,

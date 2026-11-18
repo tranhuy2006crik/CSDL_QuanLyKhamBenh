@@ -122,7 +122,7 @@ class DemoClinicData:
                 "ds_xet_nghiem": [
                     {
                         "ma_phieu": 970001,
-                        "stt": 1,
+                        "stt": "01",
                         "ten_xet_nghiem": "Công thức máu (DEMO)",
                         "ket_qua": "Trong giới hạn tham chiếu (minh họa).",
                         "ngay_gio_thuc_hien": datetime.combine(
@@ -165,7 +165,7 @@ class DemoClinicData:
                 "ds_xet_nghiem": [
                     {
                         "ma_phieu": 970002,
-                        "stt": 1,
+                        "stt": "01",
                         "ten_xet_nghiem": "Đường huyết (DEMO)",
                         "ket_qua": None,
                         "ngay_gio_thuc_hien": None,
@@ -376,8 +376,18 @@ class DemoClinicData:
         return dossier["tien_su_benh"] if dossier else None
 
     def weekly_schedule(self, department_id: int) -> list[dict[str, Any]]:
+        department_names = {
+            row["ma_khoa"]: row["ten_khoa"] for row in self.departments
+        }
         return deepcopy(
-            [row for row in self.schedule if row["ma_khoa"] == department_id]
+            [
+                {
+                    **row,
+                    "ten_khoa": department_names[row["ma_khoa"]],
+                }
+                for row in self.schedule
+                if row["ma_khoa"] == department_id
+            ]
         )
 
     def report(
@@ -612,8 +622,9 @@ class DemoClinicData:
         result: str | None,
         performed_at: datetime | None,
         price: Decimal,
-        sequence: int | None,
-    ) -> int:
+        sequence: str,
+        old_sequence: str | None,
+    ) -> str:
         visit = self.visits.get(visit_id)
         if visit is None:
             raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám demo.")
@@ -622,10 +633,13 @@ class DemoClinicData:
                 "PHIEU_DA_HOAN_THANH",
                 "Không thể thay đổi xét nghiệm của phiếu đã hoàn thành.",
             )
-        if sequence is None:
-            sequence = (
-                max((row["stt"] for row in visit["ds_xet_nghiem"]), default=0) + 1
-            )
+        if old_sequence is None:
+            if any(row["stt"] == sequence for row in visit["ds_xet_nghiem"]):
+                raise AppError(
+                    "DU_LIEU_TRUNG",
+                    f"STT xét nghiệm {sequence} đã được sử dụng trong phiếu này.",
+                    "stt",
+                )
             visit["ds_xet_nghiem"].append(
                 {
                     "ma_phieu": visit_id,
@@ -638,13 +652,23 @@ class DemoClinicData:
             )
         else:
             row = next(
-                (row for row in visit["ds_xet_nghiem"] if row["stt"] == sequence),
+                (row for row in visit["ds_xet_nghiem"] if row["stt"] == old_sequence),
                 None,
             )
             if row is None:
                 raise AppError("KHONG_TIM_THAY", "Không tìm thấy xét nghiệm demo.")
+            if any(
+                item["stt"] == sequence and item is not row
+                for item in visit["ds_xet_nghiem"]
+            ):
+                raise AppError(
+                    "DU_LIEU_TRUNG",
+                    f"STT xét nghiệm {sequence} đã được sử dụng trong phiếu này.",
+                    "stt",
+                )
             row.update(
                 {
+                    "stt": sequence,
                     "ten_xet_nghiem": name,
                     "ket_qua": result,
                     "ngay_gio_thuc_hien": performed_at,

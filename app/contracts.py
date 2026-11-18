@@ -47,6 +47,7 @@ class BacSiChiTietDTO(BacSiDTO):
 class LichLamViecDTO(TypedDict):
     ma_bac_si: Identifier
     ten_bac_si: str
+    ten_khoa: str
     phong_kham: str | None
     gia_kham: Decimal
     trinh_do_hoc_van: str | None
@@ -56,12 +57,12 @@ class LichLamViecDTO(TypedDict):
 
 
 AppointmentStatus = Literal[
-    "CONFIRMED", "ARRIVED", "COMPLETED", "NO_SHOW", "CANCELLED"
+    "CHO_KHAM", "DA_KHAM", "DA_HUY"
 ]
 
 
 class LichHenDTO(TypedDict):
-    ma_lich: int
+    ma_lich: str
     ma_benh_nhan: Identifier
     ten_benh_nhan: str
     ma_bac_si: Identifier
@@ -70,11 +71,7 @@ class LichHenDTO(TypedDict):
     bat_dau: datetime
     ket_thuc: datetime
     trang_thai: AppointmentStatus
-    da_an: bool
-    ly_do_huy: str | None
     ma_phieu_kham: Identifier | None
-    tao_luc: datetime
-    cap_nhat_luc: datetime
 
 
 class LichSuKhamRow(TypedDict):
@@ -94,7 +91,7 @@ class LichSuKhamRow(TypedDict):
 
 class XetNghiemDTO(TypedDict):
     ma_phieu: Identifier
-    stt: int
+    stt: str
     ten_xet_nghiem: str
     ket_qua: str | None
     ngay_gio_thuc_hien: datetime | None

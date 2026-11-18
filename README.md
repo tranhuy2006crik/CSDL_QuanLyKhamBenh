@@ -33,7 +33,7 @@ app/
     don_thuoc_service.py            Ghi đơn, trừ/hoàn tồn trong một transaction
     tra_cuu_service.py              Đọc danh mục và chi tiết lần khám
     clinic_service.py               Tra cứu, lịch tuần, báo cáo, tạo phiếu/xét nghiệm
-    appointment_service.py          Đặt, đổi, hủy và theo dõi lịch hẹn trong RAM
+    appointment_service.py          Đặt, đổi, hủy và theo dõi lịch hẹn trong MySQL
   ui/
     app.py                          Cửa sổ Tk duy nhất
     shell.py                        Chọn vai trò và nhập mã định danh
@@ -66,29 +66,24 @@ của thuốc để tránh nhân lặp do join nhiều dòng chi tiết.
 Ứng dụng dùng schema và các SQL đã chốt trong `sql/`. Mã bệnh nhân, bác sĩ,
 thuốc, phiếu và đơn là chuỗi như `BN001`, `BS001`, `PK001`, không chuyển mã sang
 số. `MaPhieuKhamBenh` và `MaDonThuoc` được nhập theo quy ước cấp mã của nhóm;
-`STTXetNghiem` được cấp trong transaction sau khi khóa phiếu khám.
+`STTXetNghiem` được nhập thủ công theo định dạng `01`–`99`.
 
 Màn hình nhập mã bệnh nhân/bác sĩ chỉ phân luồng giao diện, không phải xác thực
 an toàn. Không dùng cho dữ liệu sức khỏe thật nếu chưa thêm cơ chế xác minh danh
-tính/phân quyền. Lịch hẹn hiện không được lưu trong MySQL: cả luồng thật và demo
-chỉ giữ lịch trong RAM của phiên ứng dụng; đóng ứng dụng sẽ xóa lịch, các máy
-khác không đồng bộ và không thể chống đặt trùng giữa nhiều tiến trình. Luồng
-thật dùng lịch làm việc trong MySQL và mã bệnh nhân/bác sĩ đã đăng nhập; luồng
-demo dùng dữ liệu mẫu tách biệt. Lịch hẹn không tạo phiếu khám; phiếu chỉ được
-tạo khi bác sĩ thực hiện buổi khám.
+tính/phân quyền. Lịch hẹn ở chế độ thật được lưu trong MySQL; mã lịch `LH001`–
+`LH999` do ứng dụng cấp, không hiển thị hoặc yêu cầu người dùng nhập. Luồng demo
+dùng dữ liệu mẫu tách biệt. Khi bác sĩ tiếp nhận lịch, phiếu khám được gắn với
+lịch trong cùng transaction; lịch chỉ chuyển sang `DA_KHAM` khi phiếu chuyển
+sang `HOAN_THANH`.
 
 Lịch hẹn dùng slot 30 phút trong 30 ngày tới. Màn hình bệnh nhân trình bày slot
 thành các ô màu: còn trống, đã đặt hoặc đã qua; lịch của bệnh nhân và bác sĩ
-hiển thị dạng thẻ có thể chọn. Bác sĩ có ba nhóm tab chờ khám, đã khám, đã hủy /
-vắng mặt. Lịch xác nhận ngay khi đặt thành công, mỗi bệnh nhân tối đa một lịch
-hoạt động/ngày, và mỗi bác sĩ không có hai lịch chồng lấn trong cùng tiến trình.
-Lịch có thể đổi hoặc hủy trước giờ hẹn; hủy cần lý do. Bác sĩ có thể ghi nhận
-đã đến, liên kết lịch với phiếu khám thật, và
-chỉ chuyển lịch sang “Đã khám” khi phiếu liên kết đã `HOAN_THANH`. Lịch đã xử
-lý có thể ẩn/hiện lại mà không xóa khỏi RAM hoặc ảnh hưởng kiểm tra trùng lịch.
-Bác sĩ chỉ đánh dấu vắng mặt sau khi hết slot; ứng dụng không tự hủy lịch quá
-giờ. Giờ trống được tính từ lịch làm việc định kỳ; ngày nghỉ đột xuất/chặn lịch
-ngoài hệ thống chưa được mô hình hóa. Không có SMS/email nhắc lịch.
+hiển thị dạng thẻ có thể chọn. Bác sĩ có ba nhóm tab chờ khám, đã khám và đã
+hủy. Lịch xác nhận ngay khi đặt thành công; các ràng buộc SQL ngăn lịch trùng
+giờ bác sĩ/bệnh nhân theo quy ước của schema. Lịch có thể đổi hoặc hủy trước
+giờ hẹn nếu chưa gắn phiếu khám. Giờ trống được tính từ lịch làm việc định kỳ;
+ngày nghỉ đột xuất/chặn lịch ngoài hệ thống chưa được mô hình hóa. Không có
+SMS/email nhắc lịch.
 
 ## Cài đặt môi trường trên Windows
 
@@ -187,11 +182,12 @@ MySQL thật. Không tự tạo dữ liệu lâm sàng để thử trên CSDL d�
 - Tìm kiếm bác sĩ hỗ trợ mã/tên/điện thoại, ngày sinh, giới tính và địa chỉ;
   kết quả là dữ liệu bệnh nhân hiện có, không tự thêm hồ sơ.
 - Lịch bệnh nhân xem là lịch làm việc tuần trong `LichLamViecBacSi`, không phải
-  dữ liệu giữ chỗ. Tab đặt lịch tạo giờ theo lịch làm việc nhưng giữ các lượt
-  hẹn trong RAM; không thêm bảng vào ERD và không lưu vào MySQL.
+  dữ liệu giữ chỗ. Tab đặt lịch tạo giờ theo lịch làm việc và lưu lượt hẹn vào
+  `LichHen` theo schema hiện tại.
 - Xét nghiệm có khóa ghép `(MaPhieuKhamBenh, STTXetNghiem)`. Khi đang chờ kết
   quả, `KetQuaXetNghiem` và `NgayGioThucHien` cần cho phép `NULL`; khi có kết
-  quả, giao diện yêu cầu ngày giờ thực hiện.
+  quả, giao diện yêu cầu ngày giờ thực hiện. STT nhập thủ công theo chuỗi
+  `01`–`99`.
 - ERD hiện không có thuộc tính “Kết luận” riêng, nên màn hình dùng trường
   `ChanDoan` và không ghi vào cột không tồn tại.
 - Báo cáo tháng đếm số phiếu khám/lượt khám theo từng bác sĩ trong kỳ và giữ
