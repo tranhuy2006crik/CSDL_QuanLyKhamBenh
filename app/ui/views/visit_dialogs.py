@@ -1,5 +1,9 @@
 import calendar
 import re
+import os
+import sys
+import subprocess
+import tempfile
 import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime, time, date
@@ -180,11 +184,24 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         self.destroy()
 
 
+def _open_pdf_preview(path: Path) -> None:
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(path)], check=True)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=True)
+    except Exception as e:
+        print(f"Không thể tự động mở PDF: {e}")
+
+
 class XetNghiemDialog(tk.Toplevel):
     def __init__(
         self,
         parent: tk.Misc,
         ma_phieu: Identifier,
+        ma_bac_si: Identifier,
         on_saved: Callable[[], None],
         row: dict[str, object] | None = None,
     ) -> None:
@@ -201,6 +218,7 @@ class XetNghiemDialog(tk.Toplevel):
         self.configure(background="#F4F7FA")
         self.transient(parent)
         self.ma_phieu = ma_phieu
+        self.ma_bac_si = ma_bac_si
         self.on_saved = on_saved
         self.row = row
         self.columnconfigure(1, weight=1)
@@ -214,8 +232,6 @@ class XetNghiemDialog(tk.Toplevel):
         self.stt = self._entry("STT xét nghiệm (01-99)", 1)
         self.name = self._entry("Tên xét nghiệm", 2)
         self.price = self._entry("Đơn giá áp dụng (VNĐ)", 3)
-        if self.row is not None:
-            self.stt.insert(0, str(self.row["stt"]))
 
         ttk.Label(self, text="Kết quả (để trống nếu đang chờ)").grid(
             row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 3)
@@ -245,14 +261,8 @@ class XetNghiemDialog(tk.Toplevel):
             side="left", padx=(2, 6)
         )
 
-        ttk.Label(time_frame, text=" Giờ: ").pack(side="left")
-        time_options = [f"{h:02d}:{m:02d}" for h in range(24) for m in (0, 15, 30, 45)]
-        self.time_picker = ttk.Combobox(
-            time_frame,
-            width=6,
-            state="readonly",
-            values=time_options,
-        )
+        ttk.Label(time_frame, text=" Giờ (HH:MM): ").pack(side="left")
+        self.time_picker = ttk.Entry(time_frame, width=8)
         self.time_picker.pack(side="left")
 
         ttk.Label(
@@ -272,6 +282,8 @@ class XetNghiemDialog(tk.Toplevel):
         ).pack(side="right", padx=(0, 8))
 
         if row is not None:
+            self.stt.insert(0, str(row["stt"]))
+            self.stt.configure(state="disabled")
             self.name.insert(0, str(row["ten_xet_nghiem"]))
             self.price.insert(0, str(row["don_gia_ap_dung"]))
             self.result_text.insert("1.0", str(row["ket_qua"] or ""))
@@ -279,7 +291,8 @@ class XetNghiemDialog(tk.Toplevel):
             if isinstance(performed_at, datetime):
                 self.date_picker.delete(0, "end")
                 self.date_picker.insert(0, performed_at.strftime("%d/%m/%Y"))
-                self.time_picker.set(performed_at.strftime("%H:%M"))
+                self.time_picker.delete(0, "end")
+                self.time_picker.insert(0, performed_at.strftime("%H:%M"))
             else:
                 self._set_default_time()
         else:
@@ -287,7 +300,10 @@ class XetNghiemDialog(tk.Toplevel):
             self._set_default_time()
 
         self.grab_set()
-        self.name.focus_set()
+        if row is None:
+            self.stt.focus_set()
+        else:
+            self.name.focus_set()
 
     def _open_calendar(self):
         popup = tk.Toplevel(self)
@@ -386,8 +402,8 @@ class XetNghiemDialog(tk.Toplevel):
         now = datetime.now()
         self.date_picker.delete(0, "end")
         self.date_picker.insert(0, now.strftime("%d/%m/%Y"))
-        m = (now.minute // 15) * 15
-        self.time_picker.set(f"{now.hour:02d}:{m:02d}")
+        self.time_picker.delete(0, "end")
+        self.time_picker.insert(0, now.strftime("%H:%M"))
 
     def _entry(self, label: str, row: int) -> ttk.Entry:
         ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=5)
@@ -397,16 +413,18 @@ class XetNghiemDialog(tk.Toplevel):
 
     def _save(self) -> None:
         try:
-            result = self.result_text.get("1.0", "end").strip() or None
-
-            if result is None:
-                performed_at = None
-            else:
-                d = datetime.strptime(self.date_picker.get().strip(), "%d/%m/%Y").date()
-
-                time_str = self.time_picker.get().strip()
-                h, m = map(int, time_str.split(":"))
-                performed_at = datetime.combine(d, time(h, m))
+            stt_val = self.stt.get().strip()
+            if self.row is None:
+                if not stt_val.isdigit() or len(stt_val) != 2:
+                    hien_loi(
+                        self,
+                        AppError(
+                            "DU_LIEU_KHONG_HOP_LE",
+                            "STT phải là chuỗi 2 chữ số (VD: 01, 02...).",
+                            "stt",
+                        ),
+                    )
+                    return
 
             ten_xet_nghiem = self.name.get().strip()
             if not ten_xet_nghiem:
@@ -420,8 +438,7 @@ class XetNghiemDialog(tk.Toplevel):
                 )
                 return
 
-            stt = self.stt.get().strip()
-            if not re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt):
+            if not re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt_val):
                 hien_loi(
                     self,
                     AppError(
@@ -432,16 +449,56 @@ class XetNghiemDialog(tk.Toplevel):
                 )
                 return
 
+            if self.row is None:
+                current_detail = lay_chi_tiet_lan_kham(
+                    self.ma_phieu, "doctor", self.ma_bac_si
+                )
+                existing_names = [
+                    r["ten_xet_nghiem"].casefold()
+                    for r in current_detail["ds_xet_nghiem"]
+                ]
+                if ten_xet_nghiem.casefold() in existing_names:
+                    hien_loi(
+                        self,
+                        AppError(
+                            "DU_LIEU_KHONG_HOP_LE",
+                            f"Xét nghiệm '{ten_xet_nghiem}' đã tồn tại trong phiếu.",
+                            "ten_xet_nghiem",
+                        ),
+                    )
+                    return
+                existing_stts = [str(r["stt"]) for r in current_detail["ds_xet_nghiem"]]
+                if stt_val in existing_stts:
+                    hien_loi(
+                        self,
+                        AppError(
+                            "DU_LIEU_KHONG_HOP_LE",
+                            f"STT '{stt_val}' đã tồn tại trong phiếu.",
+                            "stt",
+                        ),
+                    )
+                    return
+
+            result = self.result_text.get("1.0", "end").strip() or None
+
+            if result is None:
+                performed_at = None
+            else:
+                d = datetime.strptime(self.date_picker.get().strip(), "%d/%m/%Y").date()
+                time_str = self.time_picker.get().strip()
+                h, m = map(int, time_str.split(":"))
+                performed_at = datetime.combine(d, time(h, m))
+
             price_str = self.price.get().strip()
             price_val = Decimal(price_str) if price_str else Decimal("0")
 
-            saved_stt = luu_xet_nghiem(
+            luu_xet_nghiem(
                 self.ma_phieu,
                 ten_xet_nghiem,
                 result,
                 performed_at,
                 price_val,
-                stt,
+                stt_val,
                 str(self.row["stt"]) if self.row is not None else None,
             )
         except (InvalidOperation, ValueError):
@@ -449,8 +506,8 @@ class XetNghiemDialog(tk.Toplevel):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Thời điểm thực hiện hoặc Đơn giá không hợp lệ.",
-                    "ngay_gio_thuc_hien",
+                    "STT, Giờ (HH:MM) hoặc Đơn giá không hợp lệ.",
+                    "",
                 ),
             )
             return
@@ -460,7 +517,7 @@ class XetNghiemDialog(tk.Toplevel):
 
         messagebox.showinfo(
             "Đã lưu",
-            f"Đã lưu xét nghiệm STT {saved_stt} cho phiếu khám {self.ma_phieu}.",
+            f"Đã lưu xét nghiệm STT {stt_val} cho phiếu khám {self.ma_phieu}.",
             parent=self,
         )
         self.on_saved()
@@ -543,18 +600,6 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         )
         self.lbl_doctor.pack(anchor="w", pady=(6, 2))
 
-        right_info = ttk.Frame(info_frame)
-        right_info.grid(row=0, column=1, sticky="ne", pady=(50, 0))
-
-        self.total = ttk.Label(
-            right_info,
-            text="",
-            font=("TkDefaultFont", 10, "bold"),
-            foreground="#C0392B",
-            justify="right",
-        )
-        self.total.pack(anchor="e", pady=2)
-
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.clinical_tab = ttk.Frame(self.notebook, padding=12)
@@ -586,11 +631,20 @@ class PhieuKhamDetailDialog(tk.Toplevel):
 
         self.export_button = ttk.Button(
             actions,
-            text="Xuất PDF kết quả khám",
+            text="In Phiếu khám",
             command=self._export_report,
             style="Info.TButton",
         )
         self.export_button.pack(side="left")
+
+        self.export_invoice_button = ttk.Button(
+            actions,
+            text="Xuất Phiếu thu / Hóa đơn",
+            command=self._export_invoice,
+            style="Info.TButton",
+        )
+        self.export_invoice_button.pack(side="left", padx=8)
+
         ttk.Button(actions, text="Đóng", command=self._request_close).pack(side="right")
 
         self.protocol("WM_DELETE_WINDOW", self._request_close)
@@ -600,11 +654,9 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.clinical_tab.columnconfigure(0, weight=1)
         self.clinical_tab.rowconfigure(1, weight=1)
         self.clinical_tab.rowconfigure(3, weight=1)
-
         ttk.Label(
             self.clinical_tab, text="Triệu chứng", font=("TkDefaultFont", 13, "bold")
         ).grid(row=0, column=0, sticky="w", pady=(0, 6))
-
         self.symptoms = tk.Text(
             self.clinical_tab,
             font=("TkDefaultFont", 11),
@@ -616,11 +668,9 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             highlightthickness=1,
         )
         self.symptoms.grid(row=1, column=0, sticky="nsew", pady=(0, 15))
-
         ttk.Label(
             self.clinical_tab, text="Chẩn đoán", font=("TkDefaultFont", 13, "bold")
         ).grid(row=2, column=0, sticky="w", pady=(0, 6))
-
         self.diagnosis = tk.Text(
             self.clinical_tab,
             font=("TkDefaultFont", 11),
@@ -632,7 +682,6 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             highlightthickness=1,
         )
         self.diagnosis.grid(row=3, column=0, sticky="nsew")
-
         self.symptoms.bind("<<Modified>>", self._content_changed)
         self.diagnosis.bind("<<Modified>>", self._content_changed)
 
@@ -657,12 +706,10 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.lab_table.column("ket_qua", anchor="w")
         self.lab_table.column("thoi_diem", anchor="center")
         self.lab_table.column("don_gia", anchor="e")
-
         self.lab_table.grid(row=0, column=0, sticky="nsew")
 
         self.lab_actions = ttk.Frame(self.lab_tab)
         self.lab_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-
         self.add_lab_button = ttk.Button(
             self.lab_actions, text="Chỉ định xét nghiệm", command=self._add_lab
         )
@@ -671,11 +718,6 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             self.lab_actions, text="Cập nhật kết quả", command=self._edit_lab
         )
         self.edit_lab_button.pack(side="left", padx=8)
-
-        self.lab_note = ttk.Label(
-            self.lab_actions,
-            text="Xét nghiệm liên kết trực tiếp với phiếu khám; kết quả có thể để trống khi đang chờ.",
-        )
 
     def _build_medicine_tab(self) -> None:
         self.medicine_tab.columnconfigure(0, weight=1)
@@ -689,7 +731,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 "ten": "Thuốc",
                 "so_luong": "Số lượng",
                 "cach_dung": "Cách dùng",
-                "don_gia": "Đơn giá áp dụng",
+                "don_gia": "Đơn giá",
                 "thanh_tien": "Thành tiền",
             },
             {
@@ -707,19 +749,16 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.medicine_table.column("cach_dung", anchor="w")
         self.medicine_table.column("don_gia", anchor="e")
         self.medicine_table.column("thanh_tien", anchor="e")
-
         self.medicine_table.grid(row=0, column=0, sticky="nsew")
 
         self.med_actions = ttk.Frame(self.medicine_tab)
         self.med_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-
         self.prescription_button = ttk.Button(
             self.med_actions,
             text="Kê đơn / quản lý đơn thuốc",
             command=self._open_prescription,
         )
         self.prescription_button.pack(side="left")
-
         self.prescription_note = ttk.Label(self.med_actions, text="")
         self.prescription_note.pack(side="left", padx=8)
 
@@ -743,8 +782,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             text=f'Ngày giờ khám: {info["ngay_gio_kham"]:%d/%m/%Y %H:%M}'
         )
 
-        trang_thai = info["trang_thai"]
-        if trang_thai == "HOAN_THANH":
+        if info["trang_thai"] == "HOAN_THANH":
             self.lbl_status.configure(text="HOÀN THÀNH", foreground="#2E8B57")
         else:
             self.lbl_status.configure(text="ĐANG KHÁM", foreground="#E7A23B")
@@ -760,12 +798,10 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 else "—"
             )
             self.lbl_dob.configure(text=f"Ngày sinh: {ngay_sinh_str}")
-
             raw_g = (patient.get("gioi_tinh") or "").upper()
             hien_thi_gt = {"NAM": "Nam", "NU": "Nữ", "KHAC": "Khác"}.get(
                 raw_g, raw_g or "—"
             )
-
             self.lbl_gender.configure(text=f"Giới tính: {hien_thi_gt}")
             self.lbl_address.configure(text=f"Địa chỉ: {patient.get('dia_chi') or '—'}")
         else:
@@ -778,35 +814,25 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             text=f"Bác sĩ: {info['ten_bac_si']} — {info['ten_khoa']}"
         )
 
-        self.total.configure(
-            text=(
-                f'Giá khám: {dinh_dang_tien(info["gia_kham"])}\n\n'
-                f'Xét nghiệm: {dinh_dang_tien(info["gia_xet_nghiem"])}\n\n'
-                f'Thuốc: {dinh_dang_tien(info["gia_thuoc"])}'
-            )
-        )
-
         if self.read_only:
             self.save_content_button.pack_forget()
             self.complete_button.pack_forget()
             self.export_button.pack(side="left")
+            self.export_invoice_button.pack(side="left", padx=8)
         else:
             self.save_content_button.pack(side="left")
             self.complete_button.pack(side="left", padx=8)
             self.export_button.pack_forget()
+            self.export_invoice_button.pack_forget()
 
         if self.read_only:
             self.add_lab_button.pack_forget()
             self.edit_lab_button.pack_forget()
-            self.lab_note.pack(side="left")
-
             self.prescription_button.pack_forget()
             self.prescription_note.pack(side="left")
         else:
             self.add_lab_button.pack(side="left")
             self.edit_lab_button.pack(side="left", padx=8)
-            self.lab_note.pack_forget()
-
             self.prescription_button.pack(side="left")
             self.prescription_note.pack_forget()
 
@@ -897,7 +923,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             hien_loi(self, error)
             return
         messagebox.showinfo(
-            "Hoàn thành phiếu", "Phiếu khám đã chuyển sang HOAN_THANH.", parent=self
+            "Hoàn thành", "Phiếu khám đã chuyển sang HOAN_THANH.", parent=self
         )
         self._refresh()
         if self.on_changed is not None:
@@ -909,24 +935,35 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.destroy()
 
     def _export_report(self) -> None:
-        path_text = filedialog.asksaveasfilename(
-            parent=self,
-            title="Lưu báo cáo kết quả khám",
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
-            initialfile=f"ket_qua_kham_{self.ma_phieu}.pdf",
-        )
-        if not path_text:
-            return
         try:
+            fd, path_text = tempfile.mkstemp(
+                suffix=".pdf", prefix=f"PhieuKham_{self.ma_phieu}_"
+            )
+            os.close(fd)
+            path = Path(path_text)
             report = bao_cao_chi_tiet_phieu(self.ma_phieu)
-            xuat_bao_cao_phieu_kham_pdf(Path(path_text), report)
+            xuat_bao_cao_phieu_kham_pdf(path, report)
+            _open_pdf_preview(path)
         except Exception as error:
-            hien_loi(self, error, "Không thể xuất báo cáo")
-            return
-        messagebox.showinfo(
-            "Đã xuất báo cáo", f"Đã lưu báo cáo tại:\n{path_text}", parent=self
-        )
+            hien_loi(self, error, "Không thể tải trước phiếu khám")
+
+    def _export_invoice(self) -> None:
+        try:
+            from app.pdf_export import xuat_hoa_don_pdf
+            fd, path_text = tempfile.mkstemp(suffix=".pdf", prefix=f"HoaDon_{self.ma_phieu}_")
+            os.close(fd)
+            path = Path(path_text)
+            report = bao_cao_chi_tiet_phieu(self.ma_phieu)
+
+            patient = lay_benh_nhan(report["thong_tin"]["ma_benh_nhan"])
+            if patient:
+                raw_g = (patient.get("gioi_tinh") or "").upper()
+                report["thong_tin"]["gioi_tinh"] = {"NAM": "Nam", "NU": "Nữ", "KHAC": "Khác"}.get(raw_g, raw_g or "—")
+
+            xuat_hoa_don_pdf(path, report)
+            _open_pdf_preview(path)
+        except Exception as error:
+            hien_loi(self, error, "Không thể tải trước hóa đơn")
 
     def _selected_lab(self) -> dict[str, object] | None:
         selection = self.lab_table.selection()
@@ -941,12 +978,12 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             hien_loi(self, error)
             return None
         for row in detail["ds_xet_nghiem"]:
-            if row["stt"] == stt:
+            if str(row["stt"]) == stt:
                 return row
         return None
 
     def _add_lab(self) -> None:
-        XetNghiemDialog(self, self.ma_phieu, self._refresh)
+        XetNghiemDialog(self, self.ma_phieu, self.ma_nguoi_xem, self._refresh)
 
     def _edit_lab(self) -> None:
         row = self._selected_lab()
@@ -955,7 +992,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 "Xét nghiệm", "Hãy chọn một xét nghiệm cần cập nhật.", parent=self
             )
             return
-        XetNghiemDialog(self, self.ma_phieu, self._refresh, row)
+        XetNghiemDialog(self, self.ma_phieu, self.ma_nguoi_xem, self._refresh, row)
 
     def _open_prescription(self) -> None:
         dialog = tk.Toplevel(self)
@@ -976,6 +1013,3 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         dialog.grab_set()
         self.wait_window(dialog)
         self._refresh()
-
-
-__all__ = ["PhieuKhamDetailDialog", "TaoPhieuKhamDialog"]
