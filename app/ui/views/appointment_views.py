@@ -395,6 +395,7 @@ class PatientAppointmentView(ttk.Frame):
         self._background_sequences: dict[str, int] = {}
         self._background_poll_id: str | None = None
         self._slots_request = 0
+        self._slots_empty_message = "Chọn bác sĩ và ngày để hiển thị các khung giờ."
         self._mutation_in_progress = False
         self.bind("<Destroy>", self._cancel_background_poll, add="+")
 
@@ -595,6 +596,7 @@ class PatientAppointmentView(ttk.Frame):
         self.slots.clear()
         self.slot_statuses.clear()
         self.selected_slot = None
+        self._slots_empty_message = "Chọn bác sĩ và ngày để hiển thị các khung giờ."
         self._render_slots()
         if department_id is None:
             self.slot_status.configure(text="Hãy chọn khoa.")
@@ -649,6 +651,7 @@ class PatientAppointmentView(ttk.Frame):
             self.slots.clear()
             self.slot_statuses.clear()
             self.selected_slot = None
+            self._slots_empty_message = "Chọn bác sĩ và ngày để hiển thị các khung giờ."
             self._render_slots()
             self.slot_status.configure(text="Hãy chọn khoa và bác sĩ.")
             return
@@ -664,6 +667,9 @@ class PatientAppointmentView(ttk.Frame):
                 self.slots.clear()
                 self.slot_statuses.clear()
                 self.selected_slot = None
+                self._slots_empty_message = (
+                    f"Đang tải khung giờ ngày {selected_date:%d/%m/%Y}..."
+                )
                 self._render_slots()
                 self.slot_status.configure(
                     text="Đổi lịch chỉ áp dụng với bác sĩ hiện tại của lịch hẹn."
@@ -676,6 +682,9 @@ class PatientAppointmentView(ttk.Frame):
         self.slots.clear()
         self.slot_statuses.clear()
         self.selected_slot = None
+        self._slots_empty_message = (
+            f"Đang tải khung giờ ngày {selected_date:%d/%m/%Y}..."
+        )
         self._render_slots()
         self.slot_status.configure(
             text=f"Đang tải khung giờ ngày {selected_date:%d/%m/%Y}..."
@@ -694,6 +703,10 @@ class PatientAppointmentView(ttk.Frame):
             available = [slot for slot, status in rows if status == "available"]
             self.slots = {slot.strftime("%H:%M"): slot for slot in available}
             self.selected_slot = available[0] if available else None
+            if not available:
+                self._slots_empty_message = (
+                    f"Ngày {selected_date:%d/%m/%Y} không còn khung giờ phù hợp."
+                )
             self.slot_status.configure(
                 text=(
                     f"Còn {len(available)} khung giờ ngày {selected_date:%d/%m/%Y}. "
@@ -726,7 +739,7 @@ class PatientAppointmentView(ttk.Frame):
         if not self.slot_statuses:
             ttk.Label(
                 self.slot_grid.content,
-                text="Chọn bác sĩ và ngày để hiển thị các khung giờ.",
+                text=self._slots_empty_message,
             ).grid(row=0, column=0, sticky="w", padx=8, pady=10)
             return
 
@@ -968,7 +981,7 @@ class PatientAppointmentView(ttk.Frame):
             ]
             card = AppointmentCard(
                 self.appointment_list.content,
-                "Lịch hẹn",
+                f"Lịch hẹn {row['ma_lich']}",
                 tuple(details),
                 lambda current=key: self._select_appointment(current),
                 status=STATUS_LABELS[row["trang_thai"]],

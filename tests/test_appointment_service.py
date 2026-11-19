@@ -294,6 +294,36 @@ class AppointmentServiceTests(unittest.TestCase):
             ),
         )
 
+    def test_mysql_visit_creation_requires_existing_dossier(self) -> None:
+        cursor = Mock()
+        cursor.fetchone.return_value = {
+            "ma_bac_si": 3,
+            "ma_benh_nhan": 5,
+            "ma_ho_so": None,
+            "trang_thai": "CHO_KHAM",
+        }
+
+        with (
+            patch(
+                "app.services.appointment_service.is_demo_mode",
+                return_value=False,
+            ),
+            patch(
+                "app.services.appointment_service._transaction",
+                side_effect=lambda operation, _statement: operation(cursor),
+            ),
+            self.assertRaises(AppError) as error,
+        ):
+            tao_phieu_kham_tu_lich(
+                "PK001",
+                "LH001",
+                3,
+                "Triệu chứng",
+                chan_doan="Chẩn đoán",
+            )
+
+        self.assertEqual(error.exception.code, "CAN_HO_SO_BENH_AN")
+
     def test_booking_rejects_dates_beyond_horizon(self) -> None:
         invalid_date = date.today() + timedelta(days=31)
         with self.assertRaises(AppError) as error:

@@ -192,28 +192,11 @@ class PdfPreviewDialog(tk.Toplevel):
             style="Primary.TButton",
         ).pack(side="right", padx=(0, 8))
 
-        doc = pymupdf.open(str(self.pdf_path))  # <-- Đã đổi từ fitz
+        self.pymupdf = pymupdf
         self.tk_images: list[tk.PhotoImage] = []
         self.image_items: list[int] = []
-        y_offset = 20
-        center_x = win_w // 2
-
-        for page in doc:
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4))  # <-- Đã đổi từ fitz
-            img_data = pix.tobytes("ppm")
-            tk_img = tk.PhotoImage(data=img_data)
-            self.tk_images.append(tk_img)
-
-            item_id = self.canvas.create_image(
-                center_x, y_offset, image=tk_img, anchor="n"
-            )
-            self.image_items.append(item_id)
-            y_offset += tk_img.height() + 20
-
-        doc.close()
-        self.total_height = y_offset
-        self.canvas.configure(scrollregion=(0, 0, win_w, self.total_height))
-        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self._resize_after_id: str | None = None
+        self._render_pdf()
 
         def _on_mousewheel(event: tk.Event) -> None:
             if self.canvas.winfo_exists():
@@ -227,14 +210,48 @@ class PdfPreviewDialog(tk.Toplevel):
             "<Leave>",
             lambda _e: self.canvas.unbind_all("<MouseWheel>"),
         )
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.protocol("WM_DELETE_WINDOW", self._close)
 
-    def _on_canvas_resize(self, event: tk.Event) -> None:
-        center_x = event.width // 2
+    def _render_pdf(self) -> None:
         for item_id in self.image_items:
-            _, y = self.canvas.coords(item_id)
-            self.canvas.coords(item_id, center_x, y)
-        self.canvas.configure(scrollregion=(0, 0, event.width, self.total_height))
+            self.canvas.delete(item_id)
+        self.tk_images.clear()
+        self.image_items.clear()
+
+        doc = self.pymupdf.open(str(self.pdf_path))
+        y_offset = 20
+        canvas_width = max(self.canvas.winfo_width(), 680)
+        available_width = max(canvas_width - 40, 600)
+        center_x = canvas_width // 2
+
+        for page in doc:
+            page_width = float(page.rect.width)
+            scale = min(available_width / page_width, 1.8)
+            pix = page.get_pixmap(
+                matrix=self.pymupdf.Matrix(scale, scale),
+                alpha=False,
+            )
+            img_data = pix.tobytes("ppm")
+            tk_img = tk.PhotoImage(data=img_data)
+            self.tk_images.append(tk_img)
+
+            item_id = self.canvas.create_image(
+                center_x, y_offset, image=tk_img, anchor="n"
+            )
+            self.image_items.append(item_id)
+            y_offset += tk_img.height() + 20
+
+        doc.close()
+        self.total_height = y_offset
+        self.canvas.configure(
+            scrollregion=(0, 0, canvas_width, self.total_height)
+        )
+
+    def _on_canvas_resize(self, event: tk.Event) -> None:
+        if self._resize_after_id is not None:
+            self.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.after(150, self._render_pdf)
 
     def _open_in_browser(self) -> None:
         try:

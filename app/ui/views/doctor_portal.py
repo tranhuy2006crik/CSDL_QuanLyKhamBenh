@@ -21,9 +21,9 @@ from app.services.clinic_service import (
     tim_kiem_benh_nhan,
 )
 from app.ui.views.common import (
+    PdfPreviewDialog,
     dinh_dang_tien,
     hien_loi,
-    mo_pdf_tren_trinh_duyet,
     tao_bang,
 )
 from app.ui.views.appointment_views import DoctorAppointmentView
@@ -780,7 +780,7 @@ class DoctorReportView(ttk.Frame):
         ).pack(side="left")
         self.preview_button = ttk.Button(
             footer,
-            text="In báo cáo",
+            text="Xem báo cáo",
             command=self._preview_report,
             style="Info.TButton",
         )
@@ -980,6 +980,11 @@ class DoctorReportView(ttk.Frame):
                 year,
                 self.rows,
             )
-            mo_pdf_tren_trinh_duyet(path)
+            PdfPreviewDialog(
+                self.winfo_toplevel(),
+                path,
+                f"bao_cao_bac_si_thang_{month}_{year}.pdf",
+                title=f"Báo cáo bác sĩ — Tháng {month}/{year}",
+            )
         except Exception as error:
             hien_loi(self, error, "Không thể mở báo cáo")

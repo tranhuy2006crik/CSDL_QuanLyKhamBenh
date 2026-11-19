@@ -117,6 +117,8 @@ def xuat_bao_cao_bac_si_pdf(
         "DoctorReportHeader",
         parent=body_style,
         fontName="NotoSans-Bold",
+        fontSize=8,
+        leading=10,
         alignment=TA_CENTER,
         textColor=colors.white,
     )
@@ -124,6 +126,11 @@ def xuat_bao_cao_bac_si_pdf(
         "DoctorReportRight",
         parent=body_style,
         alignment=TA_RIGHT,
+    )
+    centered_style = ParagraphStyle(
+        "DoctorReportCentered",
+        parent=body_style,
+        alignment=TA_CENTER,
     )
     page_width = page_size[0] - 24 * mm
     visits_total = sum(int(row["so_luot_kham"] or 0) for row in rows)
@@ -178,11 +185,18 @@ def xuat_bao_cao_bac_si_pdf(
                 text = str(int(value or 0))
             else:
                 text = str(value)
+            cell_style = (
+                right_style
+                if kind == "money"
+                else centered_style
+                if kind == "int"
+                else body_style
+            )
             formatted.append(
-                Paragraph(escape(text), right_style if kind == "money" else body_style)
+                Paragraph(escape(text), cell_style)
             )
         detail_data.append(formatted)
-    detail_widths = [58, 130, 48, 54, 91, 91, 91, 110]
+    detail_widths = [58, 130, 62, 62, 91, 91, 91, 110]
     details = LongTable(
         detail_data,
         colWidths=detail_widths,
@@ -195,7 +209,7 @@ def xuat_bao_cao_bac_si_pdf(
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#34495E")),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
                 ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD5E1")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 4),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),

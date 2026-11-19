@@ -18,7 +18,6 @@ from app.appointment_queries import (
     Q_APPOINTMENTS_FOR_PATIENT,
     Q_CANCEL_APPOINTMENT,
     Q_INSERT_APPOINTMENT,
-    Q_INSERT_DOSSIER,
     Q_INSERT_VISIT_FROM_APPOINTMENT,
     Q_LOCK_APPOINTMENT_FOR_VISIT,
     Q_LOCK_DOCTOR_FEE,
@@ -814,7 +813,6 @@ def tao_phieu_kham_tu_lich(
     ma_lich: str,
     ma_bac_si: Identifier,
     trieu_chung: str | None,
-    ma_ho_so_moi: Identifier | None = None,
     chan_doan: str | None = None,
 ) -> None:
     visit_id = _validate_sql_code(ma_phieu, "ma_phieu", "Mã phiếu khám")
@@ -826,8 +824,6 @@ def tao_phieu_kham_tu_lich(
     if chan_doan is not None and not isinstance(chan_doan, str):
         raise AppError("DU_LIEU_KHONG_HOP_LE", "Chẩn đoán phải là văn bản.")
     diagnosis = chan_doan.strip() if chan_doan is not None else ""
-    if ma_ho_so_moi is not None:
-        _validate_sql_code(ma_ho_so_moi, "ma_ho_so", "Mã hồ sơ")
 
     if is_demo_mode():
         with _lock:
@@ -868,24 +864,12 @@ def tao_phieu_kham_tu_lich(
                 "Chỉ tiếp nhận lịch đang ở trạng thái CHO_KHAM.",
             )
         if appointment["ma_ho_so"] is None:
-            if ma_ho_so_moi is None:
-                raise AppError(
-                    "CAN_MA_HO_SO",
-                    "Bệnh nhân chưa có hồ sơ bệnh án. Hãy nhập mã hồ sơ mới.",
-                    "ma_ho_so",
-                )
-            cursor.execute(
-                Q_INSERT_DOSSIER,
-                (ma_ho_so_moi, appointment["ma_benh_nhan"]),
+            raise AppError(
+                "CAN_HO_SO_BENH_AN",
+                "Bệnh nhân chưa có hồ sơ bệnh án.",
+                "ma_ho_so",
             )
-            dossier_id = ma_ho_so_moi
         else:
-            if ma_ho_so_moi is not None:
-                raise AppError(
-                    "DU_LIEU_KHONG_HOP_LE",
-                    "Bệnh nhân đã có hồ sơ bệnh án; không nhập mã hồ sơ mới.",
-                    "ma_ho_so",
-                )
             dossier_id = appointment["ma_ho_so"]
         cursor.execute(Q_LOCK_DOCTOR_FEE, (ma_bac_si,))
         doctor = cursor.fetchone()

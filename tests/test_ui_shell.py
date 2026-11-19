@@ -188,7 +188,7 @@ class ClinicShellTests(unittest.TestCase):
                 ]
                 self.assertTrue(horizontal_bars)
                 self.assertEqual(
-                    report.preview_button.cget("text"), "Xem trước / In báo cáo"
+                    report.preview_button.cget("text"), "Xem báo cáo"
                 )
                 self.assertEqual(report.loaded_period, report._selected_period())
                 with (
@@ -201,8 +201,8 @@ class ClinicShellTests(unittest.TestCase):
                         "app.ui.views.doctor_portal.xuat_bao_cao_bac_si_pdf"
                     ) as export_pdf,
                     patch(
-                        "app.ui.views.doctor_portal.mo_pdf_tren_trinh_duyet"
-                    ) as open_pdf,
+                        "app.ui.views.doctor_portal.PdfPreviewDialog"
+                    ) as preview_dialog,
                 ):
                     report._preview_report()
 
@@ -212,7 +212,15 @@ class ClinicShellTests(unittest.TestCase):
                     *report.loaded_period,
                     report.rows,
                 )
-                open_pdf.assert_called_once_with(Path("bao_cao.pdf"))
+                preview_dialog.assert_called_once_with(
+                    portal.winfo_toplevel(),
+                    Path("bao_cao.pdf"),
+                    f"bao_cao_bac_si_thang_{report.loaded_period[0]}_{report.loaded_period[1]}.pdf",
+                    title=(
+                        f"Báo cáo bác sĩ — Tháng "
+                        f"{report.loaded_period[0]}/{report.loaded_period[1]}"
+                    ),
+                )
                 portal.destroy()
         finally:
             app.destroy()

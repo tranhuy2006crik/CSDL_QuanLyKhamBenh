@@ -70,14 +70,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 4))
         ttk.Label(
             self,
-            text=(
-                "Mã phiếu khám nhập thủ công theo quy ước cấp mã của nhóm."
-                + (
-                    " Chỉ nhập mã hồ sơ mới nếu bệnh nhân chưa có hồ sơ bệnh án."
-                    if ma_lich_hen is not None
-                    else ""
-                )
-            ),
+            text="Mã phiếu khám nhập thủ công theo quy ước cấp mã của nhóm.",
             wraplength=600,
         ).grid(row=1, column=0, sticky="w", padx=12, pady=(0, 10))
 
@@ -87,13 +80,6 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         ttk.Label(fields, text="Mã phiếu khám").grid(row=0, column=0, sticky="w")
         self.ma_phieu = ttk.Entry(fields)
         self.ma_phieu.grid(row=0, column=1, sticky="ew", padx=(8, 0))
-        self.ma_ho_so: ttk.Entry | None = None
-        if ma_lich_hen is not None:
-            ttk.Label(fields, text="Mã hồ sơ mới (nếu chưa có)").grid(
-                row=1, column=0, sticky="w", pady=(8, 0)
-            )
-            self.ma_ho_so = ttk.Entry(fields)
-            self.ma_ho_so.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
 
         ttk.Label(self, text="Triệu chứng").grid(
             row=3, column=0, sticky="w", padx=12, pady=(10, 4)
@@ -141,18 +127,12 @@ class TaoPhieuKhamDialog(tk.Toplevel):
                 raise ValueError("empty")
             symptoms = self.trieu_chung.get("1.0", "end").strip()
             diagnosis = self.chan_doan.get("1.0", "end").strip()
-            new_dossier = (
-                self.ma_ho_so.get().strip() or None
-                if self.ma_ho_so is not None
-                else None
-            )
             if self.ma_lich_hen is not None:
                 tao_phieu_kham_tu_lich(
                     ma_phieu,
                     self.ma_lich_hen,
                     self.ma_bac_si,
                     symptoms,
-                    new_dossier,
                     diagnosis,
                 )
             else:
@@ -168,7 +148,7 @@ class TaoPhieuKhamDialog(tk.Toplevel):
                 self,
                 AppError(
                     "DU_LIEU_KHONG_HOP_LE",
-                    "Hãy nhập mã phiếu khám và chỉ nhập mã hồ sơ mới khi cần.",
+                    "Hãy nhập mã phiếu khám.",
                     "ma_phieu",
                 ),
             )

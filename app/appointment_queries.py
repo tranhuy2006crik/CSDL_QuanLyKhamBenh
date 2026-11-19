@@ -168,10 +168,6 @@ WHERE lh.MaLichHen = %s
 FOR UPDATE
 """
 
-Q_INSERT_DOSSIER = """
-INSERT INTO HoSoBenhAn (MaHoSo, MaBenhNhan, NgayLap, TienSuBenh)
-VALUES (%s, %s, CURRENT_DATE(), NULL)
-"""
 
 Q_LOCK_DOCTOR_FEE = """
 SELECT GiaKham AS gia_kham
