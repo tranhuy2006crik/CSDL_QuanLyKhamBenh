@@ -23,6 +23,7 @@ from app.ui.views.doctor_portal import DoctorPortal
 from app.ui.views.patient_portal import PatientPortal
 from app.ui.views.patient_portal import DoctorScheduleView
 from app.ui.views.patient_portal import _format_work_time
+from app.ui.views.visit_dialogs import ConfirmDeleteDialog
 
 
 class ClinicShellTests(unittest.TestCase):
@@ -222,6 +223,27 @@ class ClinicShellTests(unittest.TestCase):
                     ),
                 )
                 portal.destroy()
+        finally:
+            app.destroy()
+
+    def test_delete_confirmation_window_close_button_cancels(self) -> None:
+        app = ClinicApp(demo_mode=True)
+        try:
+            dialog = ConfirmDeleteDialog(
+                app,
+                title="Xác nhận xóa",
+                heading="Xóa phiếu khám",
+                message="Bạn có chắc chắn muốn xóa phiếu khám PK001?",
+                confirm_text="Xóa phiếu khám",
+            )
+            app.update_idletasks()
+            self.assertTrue(dialog.winfo_exists())
+
+            dialog._cancel()
+            app.update_idletasks()
+
+            self.assertFalse(dialog.result)
+            self.assertFalse(dialog.winfo_exists())
         finally:
             app.destroy()
 

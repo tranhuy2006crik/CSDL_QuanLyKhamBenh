@@ -165,6 +165,92 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         self.destroy()
 
 
+class ConfirmDeleteDialog(tk.Toplevel):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        title: str,
+        heading: str,
+        message: str,
+        confirm_text: str,
+    ) -> None:
+        super().__init__(parent)
+        self.withdraw()
+        self.title(title)
+        self.resizable(False, False)
+        self.configure(background="#F4F7FA")
+        self.result = False
+
+        container = ttk.Frame(self, padding=(22, 18, 22, 18))
+        container.pack(fill="both", expand=True)
+
+        ttk.Label(
+            container,
+            text=heading,
+            font=("Segoe UI", 14, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(
+            container,
+            text=message,
+            justify="left",
+            wraplength=440,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 16))
+
+        actions = ttk.Frame(container)
+        actions.grid(row=2, column=0, sticky="ew")
+        ttk.Button(
+            actions,
+            text="Quay lại",
+            command=self._cancel,
+            style="Secondary.TButton",
+        ).pack(side="right")
+        ttk.Button(
+            actions,
+            text=confirm_text,
+            command=self._confirm,
+            style="Danger.TButton",
+        ).pack(side="right", padx=(0, 8))
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.update_idletasks()
+        width = max(500, self.winfo_reqwidth())
+        height = self.winfo_reqheight()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.deiconify()
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+
+    def _cancel(self) -> None:
+        self.result = False
+        self.destroy()
+
+    def _confirm(self) -> None:
+        self.result = True
+        self.destroy()
+
+
+def _ask_delete_confirmation(
+    parent: tk.Misc,
+    *,
+    title: str,
+    heading: str,
+    message: str,
+    confirm_text: str,
+) -> bool:
+    dialog = ConfirmDeleteDialog(
+        parent,
+        title=title,
+        heading=heading,
+        message=message,
+        confirm_text=confirm_text,
+    )
+    parent.wait_window(dialog)
+    return dialog.result
+
+
 class XetNghiemDialog(tk.Toplevel):
     def __init__(
         self,
@@ -984,15 +1070,16 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             self.on_changed()
 
     def _delete_visit(self) -> None:
-        confirmed = messagebox.askyesno(
-            "Xác nhận xóa phiếu khám",
-            (
+        confirmed = _ask_delete_confirmation(
+            self,
+            title="Xác nhận xóa phiếu khám",
+            heading="Xóa phiếu khám",
+            message=(
                 f"Bạn có chắc chắn muốn xóa phiếu khám {self.ma_phieu}?\n\n"
                 "Toàn bộ xét nghiệm và đơn thuốc liên quan sẽ bị xóa vĩnh viễn, "
                 "và số lượng thuốc đã kê (nếu có) sẽ được hoàn lại vào kho."
             ),
-            icon="warning",
-            parent=self,
+            confirm_text="Xóa phiếu khám",
         )
         if not confirmed:
             return
@@ -1106,14 +1193,15 @@ class PhieuKhamDetailDialog(tk.Toplevel):
                 "Xét nghiệm", "Hãy chọn một xét nghiệm cần xóa.", parent=self
             )
             return
-        confirmed = messagebox.askyesno(
-            "Xác nhận xóa xét nghiệm",
-            (
+        confirmed = _ask_delete_confirmation(
+            self,
+            title="Xác nhận xóa xét nghiệm",
+            heading="Xóa xét nghiệm",
+            message=(
                 f"Bạn có chắc chắn muốn xóa xét nghiệm STT {row['stt']} "
                 f"({row['ten_xet_nghiem']}) khỏi phiếu khám {self.ma_phieu}?"
             ),
-            icon="warning",
-            parent=self,
+            confirm_text="Xóa xét nghiệm",
         )
         if not confirmed:
             return
