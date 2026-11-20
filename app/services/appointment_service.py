@@ -312,7 +312,11 @@ def cac_khung_gio_trong_ngay(
             )
         slot = start
         while slot + duration <= end:
-            if any(_overlaps(slot, slot + duration, item) for item in appointments):
+            if any(
+                item["trang_thai"] in ACTIVE_STATUSES
+                and _overlaps(slot, slot + duration, item)
+                for item in appointments
+            ):
                 status = "booked"
             elif slot <= now:
                 status = "past"
@@ -596,9 +600,6 @@ def lich_theo_bac_si(
         list[LichHenDTO],
         _read(Q_APPOINTMENTS_FOR_DOCTOR_DAY, (ma_bac_si, ngay_hen)),
     )
-
-
-
 
 
 def doi_lich(

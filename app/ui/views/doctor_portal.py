@@ -216,15 +216,6 @@ class DoctorPatientSearchView(ttk.Frame):
         top.resizable(False, False)
         top.columnconfigure(0, weight=1)
 
-        top.update_idletasks()
-        x = self.winfo_rootx() + 150
-        y = self.winfo_rooty() + 150
-        top.geometry(f"+{x}+{y}")
-        top.deiconify()
-
-        top.transient(self.winfo_toplevel())
-        top.grab_set()
-
         current_date_str = self.birth_date.get().strip()
         try:
             current_date = datetime.strptime(current_date_str, "%d/%m/%Y").date()
@@ -302,6 +293,13 @@ class DoctorPatientSearchView(ttk.Frame):
                     ).grid(row=row_index, column=col_idx, padx=1, pady=1)
 
         render()
+        top.update_idletasks()
+        x = max(0, (top.winfo_screenwidth() - top.winfo_reqwidth()) // 2)
+        y = max(0, (top.winfo_screenheight() - top.winfo_reqheight()) // 2)
+        top.geometry(f"+{x}+{y}")
+        top.deiconify()
+        top.transient(self.winfo_toplevel())
+        top.grab_set()
 
     def _clear_filters(self) -> None:
         self.keyword.delete(0, "end")
@@ -745,6 +743,12 @@ class DoctorReportView(ttk.Frame):
                 "tong_gia_tri": 160,
             },
         )
+        money_columns = {"gia_kham", "gia_xet_nghiem", "gia_thuoc", "tong_gia_tri"}
+        for column in columns:
+            self.table.column(
+                column,
+                anchor="e" if column in money_columns else "center",
+            )
         self.table.grid(row=0, column=0, sticky="nsew")
         table_scroll = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -771,6 +775,17 @@ class DoctorReportView(ttk.Frame):
         chart_scroll.grid(row=0, column=1, sticky="ns")
         self.chart.configure(yscrollcommand=chart_scroll.set)
         self.chart.bind("<Configure>", self._draw_chart)
+        self.chart.bind(
+            "<Enter>",
+            lambda _e: self.chart.bind_all(
+                "<MouseWheel>",
+                lambda ev: self.chart.yview_scroll(-int(ev.delta / 120), "units"),
+            ),
+        )
+        self.chart.bind(
+            "<Leave>",
+            lambda _e: self.chart.unbind_all("<MouseWheel>"),
+        )
 
         footer = ttk.Frame(self)
         footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
@@ -834,7 +849,9 @@ class DoctorReportView(ttk.Frame):
         self.chart.create_rectangle(10, 9, 20, 19, fill="#168AAD", outline="")
         self.chart.create_text(26, 14, text="Số lượt khám", anchor="w", fill="#111827")
         self.chart.create_rectangle(130, 9, 140, 19, fill="#E58A2B", outline="")
-        self.chart.create_text(146, 14, text="Tổng giá trị khám", anchor="w", fill="#111827")
+        self.chart.create_text(
+            146, 14, text="Tổng giá trị khám", anchor="w", fill="#111827"
+        )
         self.chart.create_text(
             width - 8,
             14,
@@ -963,9 +980,7 @@ class DoctorReportView(ttk.Frame):
             if self.loaded_period != (month, year):
                 return
         if not self.rows:
-            messagebox.showinfo(
-                "Xem báo cáo", "Không có dữ liệu để xem.", parent=self
-            )
+            messagebox.showinfo("Xem báo cáo", "Không có dữ liệu để xem.", parent=self)
             return
         try:
             fd, path_text = tempfile.mkstemp(

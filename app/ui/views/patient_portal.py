@@ -1,18 +1,28 @@
 import tkinter as tk
 from datetime import time, timedelta
-from decimal import Decimal
 from tkinter import ttk
 
 from app.contracts import BenhNhanDTO, Identifier
 from app.services.clinic_service import (
+    lay_chuc_danh_bac_si,
     lay_khoa,
-    lay_lich_su_benh_nhan,
     lay_lich_lam_viec,
+    lay_lich_su_benh_nhan,
     lay_tien_su_benh,
 )
 from app.ui.views.common import dinh_dang_tien, hien_loi, tao_bang
 from app.ui.views.appointment_views import PatientAppointmentView
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog
+
+WEEKDAY_TO_DB = {
+    "Thứ Hai": 2,
+    "Thứ Ba": 3,
+    "Thứ Tư": 4,
+    "Thứ Năm": 5,
+    "Thứ Sáu": 6,
+    "Thứ Bảy": 7,
+    "Chủ Nhật": 8,
+}
 
 
 def _format_work_time(value: time | timedelta) -> str:
@@ -60,15 +70,11 @@ class PatientPortal(ttk.Frame):
             text="Đổi vai trò / đăng xuất",
             command=on_logout,
             style="Secondary.TButton",
-        ).grid(
-            row=0, column=1, sticky="e"
-        )
+        ).grid(row=0, column=1, sticky="e")
 
         self.notebook = ttk.Notebook(self, style="Main.TNotebook")
         self.notebook.grid(row=1, column=0, sticky="nsew")
-        self.history_view = PatientHistoryView(
-            self.notebook, patient, self._open_visit
-        )
+        self.history_view = PatientHistoryView(self.notebook, patient, self._open_visit)
         self.appointment_view = PatientAppointmentView(self.notebook, patient)
         self.schedule_view = DoctorScheduleView(self.notebook)
         self.notebook.add(self.history_view, text="Hồ sơ bệnh án")
@@ -165,6 +171,8 @@ class PatientHistoryView(ttk.Frame):
                 "khoa": 200,
             },
         )
+        for column in columns:
+            self.table.column(column, anchor="center")
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -230,28 +238,28 @@ class DoctorScheduleView(ttk.Frame):
         controls = ttk.Frame(self)
         controls.grid(row=1, column=0, sticky="ew", pady=10)
         ttk.Label(controls, text="Khoa").pack(side="left")
-        self.department = ttk.Combobox(controls, state="readonly", width=38)
-        self.department.pack(side="left", padx=8)
+        self.department = ttk.Combobox(controls, state="readonly", width=28)
+        self.department.pack(side="left", padx=(6, 0))
         self.department.bind("<<ComboboxSelected>>", self._select_department)
         ttk.Label(controls, text="Tên bác sĩ").pack(side="left", padx=(12, 4))
-        self.doctor_filter = ttk.Entry(controls, width=20)
+        self.doctor_filter = ttk.Entry(controls, width=18)
         self.doctor_filter.pack(side="left")
-        self.doctor_filter.bind("<KeyRelease>", self._apply_filters)
+        self.doctor_filter.bind("<Return>", self._search)
         ttk.Label(controls, text="Chức danh").pack(side="left", padx=(12, 4))
         self.title_filter = ttk.Combobox(
             controls,
             state="readonly",
-            width=24,
+            width=20,
             values=("Tất cả",),
         )
         self.title_filter.current(0)
         self.title_filter.pack(side="left")
-        self.title_filter.bind("<<ComboboxSelected>>", self._apply_filters)
+        self.title_filter.bind("<<ComboboxSelected>>", self._search)
         ttk.Label(controls, text="Thứ").pack(side="left", padx=(12, 4))
         self.weekday_filter = ttk.Combobox(
             controls,
             state="readonly",
-            width=12,
+            width=11,
             values=(
                 "Tất cả",
                 "Thứ Hai",
@@ -265,11 +273,16 @@ class DoctorScheduleView(ttk.Frame):
         )
         self.weekday_filter.current(0)
         self.weekday_filter.pack(side="left")
-        self.weekday_filter.bind("<<ComboboxSelected>>", self._apply_filters)
-        self.schedule_rows = []
-        self.departments = {}
+        self.weekday_filter.bind("<<ComboboxSelected>>", self._search)
+        ttk.Button(
+            controls,
+            text="Tìm",
+            command=self._search,
+            style="Primary.TButton",
+        ).pack(side="left", padx=(10, 0))
+        self.departments: dict[str, Identifier] = {}
         self.status = ttk.Label(
-            self, text="Chọn khoa để xem lịch làm việc theo tuần."
+            self, text="Chọn tiêu chí lọc và bấm Tìm để xem lịch làm việc theo tuần."
         )
         self.status.grid(row=2, column=0, sticky="nw", pady=8)
         table_frame = ttk.Frame(self)
@@ -310,7 +323,11 @@ class DoctorScheduleView(ttk.Frame):
                 "ket_thuc": 120,
             },
         )
-        self.table.column("gia_kham", anchor="e")
+        for column in columns:
+            self.table.column(
+                column,
+                anchor="e" if column == "gia_kham" else "center",
+            )
         self.table.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(
             table_frame, orient="vertical", command=self.table.yview
@@ -319,6 +336,12 @@ class DoctorScheduleView(ttk.Frame):
         self.table.configure(yscrollcommand=scrollbar.set)
         self._load_departments()
 
+    def _selected_department_id(self) -> Identifier | None:
+        selected = self.department.get()
+        if not selected or selected == "Tất cả":
+            return None
+        return self.departments.get(selected)
+
     def _load_departments(self) -> None:
         try:
             rows = lay_khoa()
@@ -326,65 +349,48 @@ class DoctorScheduleView(ttk.Frame):
             hien_loi(self, error)
             return
         self.departments = {
-            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"]
-            for row in rows
+            f'{row["ten_khoa"]} (Mã {row["ma_khoa"]})': row["ma_khoa"] for row in rows
         }
-        self.department["values"] = list(self.departments)
+        self.department["values"] = ("Tất cả", *self.departments)
+        self.department.current(0)
+        self._select_department()
 
     def _select_department(self, _event: tk.Event | None = None) -> None:
-        department_id = self.departments.get(self.department.get())
-        if department_id is None:
-            return
+        department_id = self._selected_department_id()
         try:
-            rows = lay_lich_lam_viec(department_id)
+            titles = lay_chuc_danh_bac_si(department_id)
         except Exception as error:
             hien_loi(self, error)
             return
-        self.schedule_rows = rows
         selected_title = self.title_filter.get()
-        titles = sorted(
-            {
-                row["trinh_do_hoc_van"].strip()
-                for row in rows
-                if row.get("trinh_do_hoc_van")
-                and row["trinh_do_hoc_van"].strip()
-            },
-            key=str.casefold,
-        )
         self.title_filter["values"] = ("Tất cả", *titles)
         if selected_title not in titles and selected_title != "Tất cả":
             selected_title = "Tất cả"
         self.title_filter.set(selected_title or "Tất cả")
-        self._apply_filters()
-        if rows:
-            status = (
-                "Lịch định kỳ tham khảo; lịch này không cho biết ngày nghỉ đột xuất "
-                "hoặc chỗ còn trống. Muốn đặt khung giờ cụ thể, mở tab “Đặt lịch hẹn”."
-            )
-        else:
-            status = (
-                "Khoa chưa có lịch làm việc được ghi nhận nên hiện không có cơ sở "
-                "tạo khung giờ đặt hẹn."
-            )
-        self.status.configure(text=status)
+        self._search()
 
-    def _apply_filters(self, _event: tk.Event | None = None) -> None:
-        name_filter = self.doctor_filter.get().strip().casefold()
-        title_filter = self.title_filter.get()
+    def _search(self, _event: tk.Event | None = None) -> None:
+        department_id = self._selected_department_id()
+        name_filter = self.doctor_filter.get().strip()
+        selected_title = self.title_filter.get()
+        title_filter = None if selected_title in ("", "Tất cả") else selected_title
         selected_weekday = self.weekday_filter.get()
-        rows = [
-            row
-            for row in self.schedule_rows
-            if name_filter in row["ten_bac_si"].casefold()
-            and (
-                title_filter == "Tất cả"
-                or (row.get("trinh_do_hoc_van") or "").strip() == title_filter
+        weekday_db = (
+            None
+            if selected_weekday in ("", "Tất cả")
+            else WEEKDAY_TO_DB.get(selected_weekday)
+        )
+        try:
+            rows = lay_lich_lam_viec(
+                ma_khoa=department_id,
+                ten_bac_si=name_filter,
+                chuc_danh=title_filter,
+                thu=weekday_db,
             )
-            and (
-                selected_weekday in ("", "Tất cả")
-                or _format_weekday(row["thu"]) == selected_weekday
-            )
-        ]
+        except Exception as error:
+            hien_loi(self, error)
+            return
+
         for item in self.table.get_children():
             self.table.delete(item)
         for index, row in enumerate(rows):
@@ -405,3 +411,18 @@ class DoctorScheduleView(ttk.Frame):
                     _format_work_time(end),
                 ),
             )
+        if rows:
+            status = (
+                "Lịch định kỳ tham khảo; lịch này không cho biết ngày nghỉ đột xuất "
+                "hoặc chỗ còn trống. Muốn đặt khung giờ cụ thể, mở tab “Đặt lịch hẹn”."
+            )
+        elif name_filter or title_filter is not None or weekday_db is not None:
+            status = "Không tìm thấy lịch làm việc phù hợp với điều kiện lọc."
+        elif department_id is not None:
+            status = (
+                "Khoa chưa có lịch làm việc được ghi nhận nên hiện không có cơ sở "
+                "tạo khung giờ đặt hẹn."
+            )
+        else:
+            status = "Chưa có lịch làm việc nào được ghi nhận."
+        self.status.configure(text=status)

@@ -29,7 +29,6 @@ from app.services.clinic_service import (
 from app.ui.views.common import hien_loi
 from app.ui.views.visit_dialogs import PhieuKhamDetailDialog, TaoPhieuKhamDialog
 
-
 STATUS_LABELS = {
     "CHO_KHAM": "Chờ khám",
     "DA_KHAM": "Đã khám",
@@ -88,11 +87,11 @@ class CalendarDatePicker(ttk.Frame):
 
     def _open_calendar(self) -> None:
         popup = tk.Toplevel(self)
+        popup.withdraw()
         popup.title("Chọn ngày hẹn")
         popup.transient(self.winfo_toplevel())
         popup.resizable(False, False)
         popup.columnconfigure(0, weight=1)
-        popup.grab_set()
 
         month = {"year": self.value.year, "month": self.value.month}
         header = ttk.Frame(popup, padding=(10, 10, 10, 4))
@@ -164,8 +163,7 @@ class CalendarDatePicker(ttk.Frame):
                     "normal"
                     if (
                         self.maximum is None
-                        or self._month_key(next_month)
-                        <= self._month_key(self.maximum)
+                        or self._month_key(next_month) <= self._month_key(self.maximum)
                     )
                     else "disabled"
                 ),
@@ -175,9 +173,9 @@ class CalendarDatePicker(ttk.Frame):
             for column, weekday in enumerate(
                 ("T2", "T3", "T4", "T5", "T6", "T7", "CN")
             ):
-                ttk.Label(
-                    calendar_body, text=weekday, width=4, anchor="center"
-                ).grid(row=0, column=column, pady=(0, 4))
+                ttk.Label(calendar_body, text=weekday, width=4, anchor="center").grid(
+                    row=0, column=column, pady=(0, 4)
+                )
             for row_index, week in enumerate(
                 calendar.monthcalendar(month["year"], month["month"]), start=1
             ):
@@ -205,7 +203,11 @@ class CalendarDatePicker(ttk.Frame):
 
         render()
         popup.update_idletasks()
-        popup.geometry(f"+{self.winfo_rootx()}+{self.winfo_rooty() + self.winfo_height()}")
+        x = max(0, (popup.winfo_screenwidth() - popup.winfo_reqwidth()) // 2)
+        y = max(0, (popup.winfo_screenheight() - popup.winfo_reqheight()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        popup.deiconify()
+        popup.grab_set()
         popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
 
@@ -229,7 +231,9 @@ class ScrollableFrame(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.content.bind("<Configure>", self._content_configured)
         self.canvas.bind("<Configure>", self._canvas_configured)
-        self.canvas.bind("<MouseWheel>", self._mousewheel)
+        self.bind("<Enter>", self._bind_mousewheel)
+        self.bind("<Leave>", self._unbind_mousewheel)
+        self.bind("<Destroy>", self._unbind_mousewheel, add="+")
 
     def _content_configured(self, _event: tk.Event) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -237,8 +241,45 @@ class ScrollableFrame(ttk.Frame):
     def _canvas_configured(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self.window_id, width=event.width)
 
+    def _bind_mousewheel(self, _event: tk.Event) -> None:
+        self.canvas.bind_all("<MouseWheel>", self._mousewheel)
+        self.canvas.bind_all("<Button-4>", self._mousewheel_up)
+        self.canvas.bind_all("<Button-5>", self._mousewheel_down)
+
+    def _unbind_mousewheel(self, _event: tk.Event) -> None:
+        try:
+            if self.canvas.winfo_exists():
+                self.canvas.unbind_all("<MouseWheel>")
+                self.canvas.unbind_all("<Button-4>")
+                self.canvas.unbind_all("<Button-5>")
+        except tk.TclError:
+            pass
+
+    def _can_scroll(self) -> bool:
+        if not self.canvas.winfo_exists():
+            return False
+        bbox = self.canvas.bbox("all")
+        if not bbox:
+            return False
+        return (bbox[3] - bbox[1]) > self.canvas.winfo_height()
+
     def _mousewheel(self, event: tk.Event) -> None:
-        self.canvas.yview_scroll(-int(event.delta / 120), "units")
+        if not self._can_scroll() or event.delta == 0:
+            return
+        units = (
+            -int(event.delta / 120)
+            if abs(event.delta) >= 120
+            else (-1 if event.delta > 0 else 1)
+        )
+        self.canvas.yview_scroll(units, "units")
+
+    def _mousewheel_up(self, _event: tk.Event) -> None:
+        if self._can_scroll():
+            self.canvas.yview_scroll(-1, "units")
+
+    def _mousewheel_down(self, _event: tk.Event) -> None:
+        if self._can_scroll():
+            self.canvas.yview_scroll(1, "units")
 
 
 class AppointmentCard(tk.Frame):
@@ -307,20 +348,24 @@ class AppointmentCard(tk.Frame):
 class CancelAppointmentDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, appointment: LichHenDTO) -> None:
         super().__init__(parent)
+        self.withdraw()
         self.title("Hủy lịch hẹn")
-        self.geometry("520x340")
-        self.minsize(460, 300)
-        self.transient(parent.winfo_toplevel())
+        self.resizable(False, False)
+        self.configure(background="#F4F7FA")
         self.result = False
-        self.columnconfigure(0, weight=1)
+
+        container = ttk.Frame(self, padding=(22, 18, 22, 18))
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
 
         ttk.Label(
-            self,
+            container,
             text="Hủy lịch hẹn",
-            font=("Segoe UI", 15, "bold"),
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
+            font=("Segoe UI", 14, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
         ttk.Label(
-            self,
+            container,
             text=(
                 f'{appointment["ten_benh_nhan"]} ({appointment["ma_benh_nhan"]})\n'
                 f'{appointment["ten_bac_si"]} · '
@@ -328,14 +373,17 @@ class CancelAppointmentDialog(tk.Toplevel):
                 f'{appointment["ket_thuc"]:%H:%M}'
             ),
             justify="left",
-        ).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 12))
+            wraplength=400,
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+
         ttk.Label(
-            self,
+            container,
             text="Bạn có chắc chắn muốn hủy lịch hẹn này không?",
             font=("Segoe UI", 10, "bold"),
-            wraplength=480,
-        ).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 10))
-        actions = ttk.Frame(self, padding=16)
+            wraplength=400,
+        ).grid(row=2, column=0, sticky="w", pady=(0, 16))
+
+        actions = ttk.Frame(container)
         actions.grid(row=3, column=0, sticky="ew")
         ttk.Button(
             actions,
@@ -349,7 +397,16 @@ class CancelAppointmentDialog(tk.Toplevel):
             command=self._submit,
             style="Danger.TButton",
         ).pack(side="right", padx=(0, 8))
+
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.update_idletasks()
+        width = max(440, self.winfo_reqwidth())
+        height = self.winfo_reqheight()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.deiconify()
+        self.transient(parent.winfo_toplevel())
         self.grab_set()
 
     def _submit(self) -> None:
@@ -357,9 +414,7 @@ class CancelAppointmentDialog(tk.Toplevel):
         self.destroy()
 
 
-def _ask_cancel_confirmation(
-    parent: tk.Misc, appointment: LichHenDTO
-) -> bool:
+def _ask_cancel_confirmation(parent: tk.Misc, appointment: LichHenDTO) -> bool:
     dialog = CancelAppointmentDialog(parent, appointment)
     parent.wait_window(dialog)
     return dialog.result
@@ -398,6 +453,7 @@ class PatientAppointmentView(ttk.Frame):
         self._slots_empty_message = "Chọn bác sĩ và ngày để hiển thị các khung giờ."
         self._mutation_in_progress = False
         self.bind("<Destroy>", self._cancel_background_poll, add="+")
+        self.bind("<Unmap>", self._on_unmap, add="+")
 
         ttk.Label(
             self,
@@ -435,7 +491,7 @@ class PatientAppointmentView(ttk.Frame):
             maximum=date.today() + timedelta(days=30),
         )
         self.booking_date.grid(row=0, column=5, sticky="w", padx=5)
-        self.doctor_choice.bind("<<ComboboxSelected>>", self._find_slots)
+        self.doctor_choice.bind("<<ComboboxSelected>>", self._doctor_changed)
 
         self.book_button = ttk.Button(
             booking,
@@ -451,7 +507,9 @@ class PatientAppointmentView(ttk.Frame):
             state="disabled",
             style="Info.TButton",
         )
-        self.reschedule_button.grid(row=1, column=1, sticky="w", padx=(5, 0), pady=(8, 0))
+        self.reschedule_button.grid(
+            row=1, column=1, sticky="w", padx=(5, 0), pady=(8, 0)
+        )
         self.cancel_button = ttk.Button(
             booking,
             text="Hủy lịch đã chọn",
@@ -479,7 +537,7 @@ class PatientAppointmentView(ttk.Frame):
         ttk.Button(
             appointment_actions,
             text="Tải lại lịch",
-            command=self._refresh_appointments,
+            command=lambda: self._refresh_appointments(clear_selection=True),
         ).pack(side="left")
         self.appointment_list = ScrollableFrame(appointments_frame, height=135)
         self.appointment_list.grid(row=1, column=0, sticky="nsew")
@@ -506,13 +564,9 @@ class PatientAppointmentView(ttk.Frame):
             try:
                 result = task()
             except Exception as error:
-                self._background_results.put(
-                    (task_name, sequence, None, error)
-                )
+                self._background_results.put((task_name, sequence, None, error))
             else:
-                self._background_results.put(
-                    (task_name, sequence, result, None)
-                )
+                self._background_results.put((task_name, sequence, result, None))
 
         Thread(target=run, daemon=True).start()
         if self._background_poll_id is None:
@@ -540,28 +594,59 @@ class PatientAppointmentView(ttk.Frame):
             else:
                 on_success(result)
         if self._background_callbacks and self.winfo_exists():
-            self._background_poll_id = self.after(
-                30, self._poll_background_tasks
-            )
+            self._background_poll_id = self.after(30, self._poll_background_tasks)
 
     def _cancel_background_poll(self, event: tk.Event) -> None:
         if event.widget is self and self._background_poll_id is not None:
             self.after_cancel(self._background_poll_id)
             self._background_poll_id = None
 
-    def _set_mutation_busy(self, busy: bool) -> None:
-        self._mutation_in_progress = busy
-        self.book_button.configure(state="disabled" if busy else "normal")
+    def _on_unmap(self, event: tk.Event) -> None:
+        if event.widget is self and self.selected_appointment_id is not None:
+            self._clear_appointment_selection(reload_slots=False)
+
+    def _update_action_buttons(self) -> None:
         appointment = self._selected_appointment()
+        doctor = self.doctors.get(self.doctor_choice.get())
         active = (
-            not busy
+            not self._mutation_in_progress
             and appointment is not None
             and appointment["trang_thai"] == "CHO_KHAM"
             and datetime.now() < appointment["bat_dau"]
         )
-        state = "normal" if active else "disabled"
-        self.reschedule_button.configure(state=state)
-        self.cancel_button.configure(state=state)
+        same_doctor = (
+            doctor is not None
+            and appointment is not None
+            and doctor["ma_bac_si"] == appointment["ma_bac_si"]
+        )
+        self.book_button.configure(
+            state="disabled" if self._mutation_in_progress else "normal"
+        )
+        self.reschedule_button.configure(
+            state="normal" if (active and same_doctor) else "disabled"
+        )
+        self.cancel_button.configure(state="normal" if active else "disabled")
+
+    def _set_mutation_busy(self, busy: bool) -> None:
+        self._mutation_in_progress = busy
+        self._update_action_buttons()
+
+    def _clear_appointment_selection(self, reload_slots: bool = True) -> None:
+        self.selected_appointment_id = None
+        for card in self.appointment_cards.values():
+            card.set_selected(False)
+        self._update_action_buttons()
+        if reload_slots:
+            self._find_slots()
+
+    def _doctor_changed(self, _event: tk.Event | None = None) -> None:
+        doctor = self.doctors.get(self.doctor_choice.get())
+        appointment = self._selected_appointment()
+        if appointment is not None and (
+            doctor is None or appointment["ma_bac_si"] != doctor["ma_bac_si"]
+        ):
+            self._clear_appointment_selection(reload_slots=False)
+        self._find_slots()
 
     def _load_departments(self) -> None:
         self.slot_status.configure(text="Đang tải danh sách khoa...")
@@ -589,6 +674,8 @@ class PatientAppointmentView(ttk.Frame):
         _event: tk.Event | None = None,
         selected_doctor_id: Identifier | None = None,
     ) -> None:
+        if _event is not None and self.selected_appointment_id is not None:
+            self._clear_appointment_selection(reload_slots=False)
         department_id = self.departments.get(self.department.get())
         self.doctors.clear()
         self.doctor_choice.set("")
@@ -598,6 +685,7 @@ class PatientAppointmentView(ttk.Frame):
         self.selected_slot = None
         self._slots_empty_message = "Chọn bác sĩ và ngày để hiển thị các khung giờ."
         self._render_slots()
+        self._update_action_buttons()
         if department_id is None:
             self.slot_status.configure(text="Hãy chọn khoa.")
             return
@@ -620,12 +708,11 @@ class PatientAppointmentView(ttk.Frame):
                 self.doctor_choice.set(selected_label)
             elif self.doctors:
                 self.doctor_choice.current(0)
+            self._update_action_buttons()
             if self.doctors:
                 self._find_slots()
             else:
-                self.slot_status.configure(
-                    text="Khoa này chưa có bác sĩ để đặt lịch."
-                )
+                self.slot_status.configure(text="Khoa này chưa có bác sĩ để đặt lịch.")
 
         def failed(error: Exception) -> None:
             self.slot_status.configure(text="Không tải được danh sách bác sĩ.")
@@ -646,6 +733,7 @@ class PatientAppointmentView(ttk.Frame):
     def _find_slots(self, _event: tk.Event | None = None) -> None:
         self._slots_request += 1
         request = self._slots_request
+        self._update_action_buttons()
         doctor = self.doctors.get(self.doctor_choice.get())
         if doctor is None:
             self.slots.clear()
@@ -657,24 +745,6 @@ class PatientAppointmentView(ttk.Frame):
             return
         try:
             selected_date = self.booking_date.get_date()
-            appointment = self._selected_appointment()
-            if (
-                appointment is not None
-                and appointment["trang_thai"] == "CHO_KHAM"
-                and datetime.now() < appointment["bat_dau"]
-                and appointment["ma_bac_si"] != doctor["ma_bac_si"]
-            ):
-                self.slots.clear()
-                self.slot_statuses.clear()
-                self.selected_slot = None
-                self._slots_empty_message = (
-                    f"Đang tải khung giờ ngày {selected_date:%d/%m/%Y}..."
-                )
-                self._render_slots()
-                self.slot_status.configure(
-                    text="Đổi lịch chỉ áp dụng với bác sĩ hiện tại của lịch hẹn."
-                )
-                return
             doctor_id = doctor["ma_bac_si"]
         except Exception as error:
             hien_loi(self, error)
@@ -752,7 +822,11 @@ class PatientAppointmentView(ttk.Frame):
                 callback = lambda current=slot: self._select_slot(current)
             else:
                 label = "Đã đặt" if status == "booked" else "Đã qua"
-                style = "SlotUnavailable.TButton" if status == "booked" else "SlotPast.TButton"
+                style = (
+                    "SlotUnavailable.TButton"
+                    if status == "booked"
+                    else "SlotPast.TButton"
+                )
                 button_state = "disabled"
                 callback = None
             button = ttk.Button(
@@ -782,7 +856,11 @@ class PatientAppointmentView(ttk.Frame):
     def _book(self) -> None:
         doctor = self.doctors.get(self.doctor_choice.get())
         slot = self.selected_slot
-        if doctor is None or slot is None or self.slot_statuses.get(slot) != "available":
+        if (
+            doctor is None
+            or slot is None
+            or self.slot_statuses.get(slot) != "available"
+        ):
             hien_loi(
                 self,
                 AppError(
@@ -796,9 +874,7 @@ class PatientAppointmentView(ttk.Frame):
 
         def booked(_appointment: LichHenDTO) -> None:
             self._set_mutation_busy(False)
-            messagebox.showinfo(
-                "Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self
-            )
+            messagebox.showinfo("Đặt lịch", "Lịch hẹn đã được xác nhận.", parent=self)
             self._refresh_appointments()
             self._find_slots()
 
@@ -901,19 +977,15 @@ class PatientAppointmentView(ttk.Frame):
         appointment = self._selected_appointment()
         for key, card in self.appointment_cards.items():
             card.set_selected(key == self.selected_appointment_id)
-        active = (
-            appointment is not None
-            and appointment["trang_thai"] == "CHO_KHAM"
-            and datetime.now() < appointment["bat_dau"]
-            and not self._mutation_in_progress
-        )
-        state = "normal" if active else "disabled"
-        self.reschedule_button.configure(state=state)
-        self.cancel_button.configure(state=state)
+        self._update_action_buttons()
         if appointment is None:
             return
         self.booking_date.set_date(appointment["bat_dau"].date(), notify=False)
-        if not date.today() <= appointment["bat_dau"].date() <= date.today() + timedelta(days=30):
+        if (
+            not date.today()
+            <= appointment["bat_dau"].date()
+            <= date.today() + timedelta(days=30)
+        ):
             self.slots.clear()
             self.slot_statuses.clear()
             self.selected_slot = None
@@ -938,9 +1010,7 @@ class PatientAppointmentView(ttk.Frame):
             or current_doctor["ma_bac_si"] != appointment["ma_bac_si"]
         ):
             self.department.set(department_label)
-            self._department_changed(
-                selected_doctor_id=appointment["ma_bac_si"]
-            )
+            self._department_changed(selected_doctor_id=appointment["ma_bac_si"])
             return
         doctor_label = next(
             (
@@ -955,10 +1025,15 @@ class PatientAppointmentView(ttk.Frame):
         self._find_slots()
 
     def _select_appointment(self, appointment_id: str) -> None:
+        if self.selected_appointment_id == appointment_id:
+            self._clear_appointment_selection(reload_slots=False)
+            return
         self.selected_appointment_id = appointment_id
         self._appointment_selected()
 
-    def _refresh_appointments(self) -> None:
+    def _refresh_appointments(self, clear_selection: bool = False) -> None:
+        if clear_selection:
+            self.selected_appointment_id = None
         try:
             rows = lich_theo_benh_nhan(self.patient["ma_benh_nhan"])
         except Exception as error:
@@ -968,9 +1043,7 @@ class PatientAppointmentView(ttk.Frame):
         self.appointment_cards.clear()
         for child in self.appointment_list.content.winfo_children():
             child.destroy()
-        if self.selected_appointment_id not in {
-            str(row["ma_lich"]) for row in rows
-        }:
+        if self.selected_appointment_id not in {str(row["ma_lich"]) for row in rows}:
             self.selected_appointment_id = None
         for row in rows:
             key = str(row["ma_lich"])
@@ -1091,9 +1164,7 @@ class DoctorAppointmentView(ttk.Frame):
         for card_list in self.card_lists.values():
             for child in card_list.content.winfo_children():
                 child.destroy()
-        if self.selected_appointment_id not in {
-            str(row["ma_lich"]) for row in rows
-        }:
+        if self.selected_appointment_id not in {str(row["ma_lich"]) for row in rows}:
             self.selected_appointment_id = None
         for row in rows:
             key = str(row["ma_lich"])
@@ -1120,9 +1191,7 @@ class DoctorAppointmentView(ttk.Frame):
             card.set_selected(key == self.selected_appointment_id)
             self.cards[key] = card
         for key, card_list in self.card_lists.items():
-            if not any(
-                row["trang_thai"] in self.status_groups[key][1] for row in rows
-            ):
+            if not any(row["trang_thai"] in self.status_groups[key][1] for row in rows):
                 ttk.Label(
                     card_list.content,
                     text="Không có lịch hẹn trong trạng thái này.",

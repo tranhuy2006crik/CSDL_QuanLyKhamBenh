@@ -1,25 +1,27 @@
 import calendar
-import re
 import os
+import re
 import tempfile
 import tkinter as tk
 from collections.abc import Callable
-from datetime import datetime, time, date
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from app.contracts import Identifier
 from app.errors import AppError
 from app.pdf_export import xuat_bao_cao_phieu_kham_pdf
+from app.services.appointment_service import tao_phieu_kham_tu_lich
 from app.services.clinic_service import (
     hoan_thanh_phieu_kham,
+    lay_benh_nhan,
     luu_noi_dung_kham,
     luu_xet_nghiem,
     tao_phieu_kham,
-    lay_benh_nhan,
+    xoa_phieu_dang_kham,
+    xoa_xet_nghiem,
 )
-from app.services.appointment_service import tao_phieu_kham_tu_lich
 from app.services.tra_cuu_service import (
     bao_cao_chi_tiet_phieu,
     lay_chi_tiet_lan_kham,
@@ -29,7 +31,6 @@ from app.ui.views.common import (
     PdfPreviewDialog,
     dinh_dang_tien,
     hien_loi,
-    mo_pdf_tren_trinh_duyet,
     tao_bang,
     xac_nhan_thay_doi_chua_luu,
 )
@@ -47,13 +48,14 @@ class TaoPhieuKhamDialog(tk.Toplevel):
         super().__init__(parent)
         self.withdraw()
         self.title("Tạo phiếu khám")
-        self.geometry("650x520")
+        width, height = 650, 480
+        self.geometry(f"{width}x{height}")
         self.update_idletasks()
-        x = (self.winfo_screenwidth() - self.winfo_width()) // 2
-        y = (self.winfo_screenheight() - self.winfo_height()) // 2
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
         self.geometry(f"+{x}+{y}")
         self.deiconify()
-        self.minsize(580, 460)
+        self.minsize(580, 440)
         self.configure(background="#F4F7FA")
         self.transient(parent)
         self.result: Identifier | None = None
@@ -111,11 +113,14 @@ class TaoPhieuKhamDialog(tk.Toplevel):
 
         actions = ttk.Frame(self, padding=12)
         actions.grid(row=7, column=0, sticky="ew")
-        ttk.Button(actions, text="Hủy", command=self.destroy).pack(side="right")
+        ttk.Button(
+            actions, text="Hủy", command=self.destroy, style="Secondary.TButton"
+        ).pack(side="right")
         ttk.Button(
             actions,
             text="Tiếp nhận lịch" if ma_lich_hen else "Tạo phiếu khám",
             command=self._save,
+            style="Primary.TButton",
         ).pack(side="right", padx=(0, 8))
         self.grab_set()
         self.ma_phieu.focus_set()
@@ -276,15 +281,6 @@ class XetNghiemDialog(tk.Toplevel):
         popup.resizable(False, False)
         popup.columnconfigure(0, weight=1)
 
-        popup.update_idletasks()
-        x = self.winfo_rootx() + 80
-        y = self.winfo_rooty() + 80
-        popup.geometry(f"+{x}+{y}")
-        popup.deiconify()
-
-        popup.transient(self)
-        popup.grab_set()
-
         current_date_str = self.date_picker.get().strip()
         try:
             current_date = datetime.strptime(current_date_str, "%d/%m/%Y").date()
@@ -361,6 +357,13 @@ class XetNghiemDialog(tk.Toplevel):
                     ).grid(row=row_index, column=col_idx, padx=1, pady=1)
 
         render()
+        popup.update_idletasks()
+        x = max(0, (popup.winfo_screenwidth() - popup.winfo_reqwidth()) // 2)
+        y = max(0, (popup.winfo_screenheight() - popup.winfo_reqheight()) // 2)
+        popup.geometry(f"+{x}+{y}")
+        popup.deiconify()
+        popup.transient(self)
+        popup.grab_set()
 
     def _set_default_time(self):
         now = datetime.now()
@@ -499,16 +502,10 @@ class PhieuKhamDetailDialog(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.withdraw()
+        self._parent = parent
         self.title(f"Chi tiết phiếu khám {ma_phieu}")
-        self.geometry("1024x720")
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - self.winfo_width()) // 2
-        y = (self.winfo_screenheight() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
-        self.deiconify()
         self.minsize(950, 650)
         self.configure(background="#F4F7FA")
-        self.transient(parent)
         self.ma_phieu = ma_phieu
         self.vai_tro = vai_tro
         self.ma_nguoi_xem = ma_nguoi_xem
@@ -564,6 +561,33 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         )
         self.lbl_doctor.pack(anchor="w", pady=(6, 2))
 
+        right_info = ttk.Frame(info_frame)
+        right_info.grid(row=0, column=1, sticky="e")
+
+        self.lbl_cost_exam = ttk.Label(
+            right_info,
+            text="",
+            foreground="#C0392B",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.lbl_cost_exam.pack(anchor="e", pady=3)
+
+        self.lbl_cost_lab = ttk.Label(
+            right_info,
+            text="",
+            foreground="#C0392B",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.lbl_cost_lab.pack(anchor="e", pady=3)
+
+        self.lbl_cost_med = ttk.Label(
+            right_info,
+            text="",
+            foreground="#C0392B",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.lbl_cost_med.pack(anchor="e", pady=3)
+
         self.notebook = ttk.Notebook(self)
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.clinical_tab = ttk.Frame(self.notebook, padding=12)
@@ -592,6 +616,12 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             style="Success.TButton",
         )
         self.complete_button.pack(side="left", padx=8)
+        self.delete_visit_button = ttk.Button(
+            actions,
+            text="Xóa phiếu khám",
+            command=self._delete_visit,
+            style="Danger.TButton",
+        )
 
         self.export_button = ttk.Button(
             actions,
@@ -612,7 +642,16 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         ttk.Button(actions, text="Đóng", command=self._request_close).pack(side="right")
 
         self.protocol("WM_DELETE_WINDOW", self._request_close)
-        self._refresh()
+        if not self._refresh(initial=True):
+            return
+        width, height = 1024, 720
+        self.geometry(f"{width}x{height}")
+        self.update_idletasks()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
+        self.geometry(f"+{x}+{y}")
+        self.transient(parent)
+        self.deiconify()
 
     def _build_clinical_tab(self) -> None:
         self.clinical_tab.columnconfigure(0, weight=1)
@@ -671,6 +710,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.lab_table.column("thoi_diem", anchor="center")
         self.lab_table.column("don_gia", anchor="e")
         self.lab_table.grid(row=0, column=0, sticky="nsew")
+        self.lab_table.bind("<<TreeviewSelect>>", self._lab_selection_changed)
 
         self.lab_actions = ttk.Frame(self.lab_tab)
         self.lab_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -682,6 +722,14 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             self.lab_actions, text="Cập nhật kết quả", command=self._edit_lab
         )
         self.edit_lab_button.pack(side="left", padx=8)
+        self.delete_lab_button = ttk.Button(
+            self.lab_actions,
+            text="Xóa xét nghiệm",
+            command=self._delete_lab,
+            state="disabled",
+            style="Danger.TButton",
+        )
+        self.delete_lab_button.pack(side="left")
 
     def _build_medicine_tab(self) -> None:
         self.medicine_tab.columnconfigure(0, weight=1)
@@ -726,17 +774,20 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self.prescription_note = ttk.Label(self.med_actions, text="")
         self.prescription_note.pack(side="left", padx=8)
 
-    def _refresh(self) -> None:
+    def _refresh(self, initial: bool = False) -> bool:
         try:
             data = lay_chi_tiet_lan_kham(self.ma_phieu, self.vai_tro, self.ma_nguoi_xem)
         except Exception as error:
-            hien_loi(self, error)
-            return
+            hien_loi(self._parent if initial else self, error)
+            if initial:
+                self.destroy()
+            return False
 
         info = data["thong_tin"]
         patient = lay_benh_nhan(info["ma_benh_nhan"])
 
         self.read_only = self.vai_tro != "doctor" or info["trang_thai"] != "DANG_KHAM"
+        can_delete_visit = not self.read_only and info["ma_bac_si"] == self.ma_nguoi_xem
         self._saved_symptoms = data["trieu_chung"] or ""
         self._saved_diagnosis = data["chan_doan"] or ""
         self.dirty = False
@@ -778,25 +829,63 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             text=f"Bác sĩ: {info['ten_bac_si']} — {info['ten_khoa']}"
         )
 
+        gia_kham = Decimal(str(info.get("gia_kham") or 0))
+        if info.get("gia_xet_nghiem") is not None:
+            gia_xet_nghiem = Decimal(str(info["gia_xet_nghiem"]))
+        else:
+            gia_xet_nghiem = sum(
+                (
+                    Decimal(str(r.get("don_gia_ap_dung") or 0))
+                    for r in data["ds_xet_nghiem"]
+                ),
+                Decimal("0"),
+            )
+        if info.get("gia_thuoc") is not None:
+            gia_thuoc = Decimal(str(info["gia_thuoc"]))
+        elif data.get("don_thuoc"):
+            gia_thuoc = sum(
+                (
+                    Decimal(str(r.get("thanh_tien") or 0))
+                    for r in data["don_thuoc"]["ds_thuoc"]
+                ),
+                Decimal("0"),
+            )
+        else:
+            gia_thuoc = Decimal("0")
+
+        self.lbl_cost_exam.configure(text=f"Giá khám: {dinh_dang_tien(gia_kham)}")
+        self.lbl_cost_lab.configure(
+            text=f"Xét nghiệm: {dinh_dang_tien(gia_xet_nghiem)}"
+        )
+        self.lbl_cost_med.configure(text=f"Thuốc: {dinh_dang_tien(gia_thuoc)}")
+
         if self.read_only:
             self.save_content_button.pack_forget()
             self.complete_button.pack_forget()
+            self.delete_visit_button.pack_forget()
             self.export_button.pack(side="left")
             self.export_invoice_button.pack(side="left", padx=8)
         else:
             self.save_content_button.pack(side="left")
             self.complete_button.pack(side="left", padx=8)
+            if can_delete_visit:
+                self.delete_visit_button.pack(side="left")
+            else:
+                self.delete_visit_button.pack_forget()
             self.export_button.pack_forget()
             self.export_invoice_button.pack_forget()
 
         if self.read_only:
             self.add_lab_button.pack_forget()
             self.edit_lab_button.pack_forget()
+            self.delete_lab_button.pack_forget()
             self.prescription_button.pack_forget()
             self.prescription_note.pack(side="left")
         else:
             self.add_lab_button.pack(side="left")
             self.edit_lab_button.pack(side="left", padx=8)
+            self.delete_lab_button.pack(side="left")
+            self.delete_lab_button.configure(state="disabled")
             self.prescription_button.pack(side="left")
             self.prescription_note.pack_forget()
 
@@ -846,6 +935,7 @@ class PhieuKhamDetailDialog(tk.Toplevel):
 
         if self.on_changed is not None:
             self.on_changed()
+        return True
 
     def _set_text(self, widget: tk.Text, value: str) -> None:
         widget.configure(state="normal")
@@ -892,6 +982,34 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         self._refresh()
         if self.on_changed is not None:
             self.on_changed()
+
+    def _delete_visit(self) -> None:
+        confirmed = messagebox.askyesno(
+            "Xác nhận xóa phiếu khám",
+            (
+                f"Bạn có chắc chắn muốn xóa phiếu khám {self.ma_phieu}?\n\n"
+                "Toàn bộ xét nghiệm và đơn thuốc liên quan sẽ bị xóa vĩnh viễn, "
+                "và số lượng thuốc đã kê (nếu có) sẽ được hoàn lại vào kho."
+            ),
+            icon="warning",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        try:
+            xoa_phieu_dang_kham(self.ma_phieu, self.ma_nguoi_xem)
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        self.dirty = False
+        messagebox.showinfo(
+            "Đã xóa",
+            f"Đã xóa phiếu khám {self.ma_phieu} và hoàn tồn kho thuốc (nếu có).",
+            parent=self,
+        )
+        if self.on_changed is not None:
+            self.on_changed()
+        self.destroy()
 
     def _request_close(self) -> None:
         if self.dirty and not xac_nhan_thay_doi_chua_luu(self, self._save_content):
@@ -946,6 +1064,12 @@ class PhieuKhamDetailDialog(tk.Toplevel):
         except Exception as error:
             hien_loi(self, error, "Không thể tải trước hóa đơn")
 
+    def _lab_selection_changed(self, _event: tk.Event | None = None) -> None:
+        has_selection = bool(self.lab_table.selection())
+        self.delete_lab_button.configure(
+            state="normal" if (not self.read_only and has_selection) else "disabled"
+        )
+
     def _selected_lab(self) -> dict[str, object] | None:
         selection = self.lab_table.selection()
         if not selection:
@@ -974,6 +1098,36 @@ class PhieuKhamDetailDialog(tk.Toplevel):
             )
             return
         XetNghiemDialog(self, self.ma_phieu, self.ma_nguoi_xem, self._refresh, row)
+
+    def _delete_lab(self) -> None:
+        row = self._selected_lab()
+        if row is None:
+            messagebox.showinfo(
+                "Xét nghiệm", "Hãy chọn một xét nghiệm cần xóa.", parent=self
+            )
+            return
+        confirmed = messagebox.askyesno(
+            "Xác nhận xóa xét nghiệm",
+            (
+                f"Bạn có chắc chắn muốn xóa xét nghiệm STT {row['stt']} "
+                f"({row['ten_xet_nghiem']}) khỏi phiếu khám {self.ma_phieu}?"
+            ),
+            icon="warning",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        try:
+            xoa_xet_nghiem(self.ma_phieu, str(row["stt"]), self.ma_nguoi_xem)
+        except Exception as error:
+            hien_loi(self, error)
+            return
+        messagebox.showinfo(
+            "Đã xóa",
+            f"Đã xóa xét nghiệm STT {row['stt']} khỏi phiếu khám {self.ma_phieu}.",
+            parent=self,
+        )
+        self._refresh()
 
     def _open_prescription(self) -> None:
         dialog = tk.Toplevel(self)

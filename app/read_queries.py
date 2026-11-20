@@ -13,6 +13,15 @@ WHERE (%(ma_khoa)s IS NULL OR MaKhoa = %(ma_khoa)s)
 ORDER BY HoTen, MaBacSi
 """
 
+Q_CHUC_DANH_BAC_SI = """
+SELECT DISTINCT TRIM(TrinhDoHocVan) AS trinh_do_hoc_van
+FROM BacSi
+WHERE TrinhDoHocVan IS NOT NULL
+  AND TRIM(TrinhDoHocVan) <> ''
+  AND (%(ma_khoa)s IS NULL OR MaKhoa = %(ma_khoa)s)
+ORDER BY trinh_do_hoc_van
+"""
+
 Q_BAC_SI_THEO_MA = """
 SELECT MaBacSi AS ma_bac_si, HoTen AS ten_bac_si, MaKhoa AS ma_khoa,
        GiaKham AS gia_kham, PhongKham AS phong_kham
@@ -225,7 +234,16 @@ SELECT
 FROM BacSi AS bs
 JOIN Khoa AS k ON k.MaKhoa = bs.MaKhoa
 JOIN LichLamViecBacSi AS lw ON lw.MaBacSi = bs.MaBacSi
-WHERE bs.MaKhoa = %(ma_khoa)s
+WHERE (%(ma_khoa)s IS NULL OR bs.MaKhoa = %(ma_khoa)s)
+  AND (
+      %(ten_bac_si)s = ''
+      OR LOCATE(%(ten_bac_si)s, bs.HoTen) > 0
+  )
+  AND (
+      %(chuc_danh)s IS NULL
+      OR TRIM(COALESCE(bs.TrinhDoHocVan, '')) = %(chuc_danh)s
+  )
+  AND (%(thu)s IS NULL OR lw.Thu = %(thu)s)
 ORDER BY bs.HoTen, lw.Thu, lw.GioBatDau
 """
 
@@ -342,4 +360,15 @@ SET STTXetNghiem = %(stt)s,
     DonGiaApDung = %(don_gia_ap_dung)s
 WHERE MaPhieuKhamBenh = %(ma_phieu)s
   AND STTXetNghiem = %(stt_cu)s
+"""
+
+Q_DELETE_XET_NGHIEM = """
+DELETE FROM XetNghiem
+WHERE MaPhieuKhamBenh = %(ma_phieu)s
+  AND STTXetNghiem = %(stt)s
+  AND (
+      SELECT TrangThaiPhieuKham
+      FROM PhieuKhamBenh
+      WHERE MaPhieuKhamBenh = %(ma_phieu)s
+  ) = 'DANG_KHAM'
 """

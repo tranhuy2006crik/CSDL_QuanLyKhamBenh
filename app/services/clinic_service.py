@@ -36,6 +36,8 @@ from app.read_queries import (
     Q_BAC_SI,
     Q_BAC_SI_THEO_MA,
     Q_BENH_NHAN_THEO_MA,
+    Q_CHUC_DANH_BAC_SI,
+    Q_DELETE_XET_NGHIEM,
     Q_INSERT_PHIEU_KHAM,
     Q_INSERT_XET_NGHIEM,
     Q_HO_SO_BENH_AN,
@@ -86,6 +88,26 @@ def lay_danh_sach_bac_si(ma_khoa: Identifier | None = None) -> list[BacSiDTO]:
     if is_demo_mode():
         return cast(list[BacSiDTO], demo_data().list_doctors(ma_khoa))
     return cast(list[BacSiDTO], _read(Q_BAC_SI, {"ma_khoa": ma_khoa}))
+
+
+def lay_chuc_danh_bac_si(ma_khoa: Identifier | None = None) -> list[str]:
+    if ma_khoa is not None:
+        require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
+    if is_demo_mode():
+        departments = (
+            [ma_khoa]
+            if ma_khoa is not None
+            else [row["ma_khoa"] for row in demo_data().list_departments()]
+        )
+        titles = {
+            (row.get("trinh_do_hoc_van") or "").strip()
+            for dept_id in departments
+            for row in demo_data().weekly_schedule(dept_id)
+            if (row.get("trinh_do_hoc_van") or "").strip()
+        }
+        return sorted(titles, key=str.casefold)
+    rows = _read(Q_CHUC_DANH_BAC_SI, {"ma_khoa": ma_khoa})
+    return [str(row["trinh_do_hoc_van"]) for row in rows]
 
 
 def lay_bac_si(ma_bac_si: Identifier) -> BacSiChiTietDTO | None:
@@ -199,8 +221,8 @@ def _weekday_order(value: str | int) -> tuple[int, str]:
     )
     for index, choices in enumerate(aliases):
         if normalized in choices:
-            return index, value
-    return len(aliases), value
+            return index, str(value)
+    return len(aliases), str(value)
 
 
 def _time_order(value: time | timedelta) -> float:
@@ -209,10 +231,49 @@ def _time_order(value: time | timedelta) -> float:
     return value.hour * 3600 + value.minute * 60 + value.second
 
 
-def lay_lich_lam_viec(ma_khoa: Identifier) -> list[LichLamViecDTO]:
-    require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
+def lay_lich_lam_viec(
+    ma_khoa: Identifier | None = None,
+    ten_bac_si: str = "",
+    chuc_danh: str | None = None,
+    thu: int | None = None,
+) -> list[LichLamViecDTO]:
+    if ma_khoa is not None:
+        require_identifier(ma_khoa, "ma_khoa", "Mã khoa")
+    name_filter = ten_bac_si.strip() if isinstance(ten_bac_si, str) else ""
+    title_filter = (
+        chuc_danh.strip() if isinstance(chuc_danh, str) and chuc_danh.strip() else None
+    )
+    if thu is not None and (
+        isinstance(thu, bool) or not isinstance(thu, int) or not 2 <= thu <= 8
+    ):
+        raise AppError("DU_LIEU_KHONG_HOP_LE", "Thứ làm việc không hợp lệ.", "thu")
+
     if is_demo_mode():
-        rows = cast(list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa))
+        if ma_khoa is not None:
+            rows = cast(list[LichLamViecDTO], demo_data().weekly_schedule(ma_khoa))
+        else:
+            rows = []
+            for dept in demo_data().list_departments():
+                rows.extend(
+                    cast(
+                        list[LichLamViecDTO],
+                        demo_data().weekly_schedule(dept["ma_khoa"]),
+                    )
+                )
+        if name_filter:
+            rows = [
+                row
+                for row in rows
+                if name_filter.casefold() in row["ten_bac_si"].casefold()
+            ]
+        if title_filter is not None:
+            rows = [
+                row
+                for row in rows
+                if (row.get("trinh_do_hoc_van") or "").strip() == title_filter
+            ]
+        if thu is not None:
+            rows = [row for row in rows if _weekday_order(row["thu"])[0] == thu - 2]
         rows.sort(
             key=lambda row: (
                 row["ten_bac_si"].casefold(),
@@ -221,9 +282,18 @@ def lay_lich_lam_viec(ma_khoa: Identifier) -> list[LichLamViecDTO]:
             )
         )
         return rows
+
     rows = cast(
         list[LichLamViecDTO],
-        _read(Q_LICH_LAM_VIEC, {"ma_khoa": ma_khoa}),
+        _read(
+            Q_LICH_LAM_VIEC,
+            {
+                "ma_khoa": ma_khoa,
+                "ten_bac_si": name_filter,
+                "chuc_danh": title_filter,
+                "thu": thu,
+            },
+        ),
     )
     rows.sort(
         key=lambda row: (
@@ -598,6 +668,92 @@ def luu_xet_nghiem(
                 ),
             ) from error
         _rollback(connection)
+        raise
+    finally:
+        _close_transaction(cursor, connection)
+
+
+def xoa_xet_nghiem(
+    ma_phieu: Identifier,
+    stt: str,
+    ma_bac_si: Identifier | None = None,
+) -> None:
+    _validate_id(ma_phieu, "ma_phieu", "Mã phiếu khám")
+    if not isinstance(stt, str) or re.fullmatch(r"(0[1-9]|[1-9][0-9])", stt) is None:
+        raise AppError(
+            "DU_LIEU_KHONG_HOP_LE",
+            "STT xét nghiệm phải có định dạng từ 01 đến 99.",
+            "stt",
+        )
+    if ma_bac_si is not None:
+        _validate_id(ma_bac_si, "ma_bac_si", "Mã bác sĩ")
+
+    if is_demo_mode():
+        delete_fn = getattr(demo_data(), "delete_lab", None)
+        if callable(delete_fn):
+            delete_fn(ma_phieu, stt)
+            return
+        raise AppError(
+            "KHONG_HO_TRO",
+            "Chế độ demo hiện chưa hỗ trợ xóa xét nghiệm.",
+        )
+
+    connection = get_connection()
+    cursor: MySQLCursorDict | None = None
+    commit_attempted = False
+    try:
+        connection.start_transaction()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(Q_LOCK_PHIEU_KHAM, {"ma_phieu": ma_phieu})
+        locked_visit = cursor.fetchone()
+        if locked_visit is None:
+            raise AppError("KHONG_TIM_THAY", "Không tìm thấy phiếu khám.")
+        if ma_bac_si is not None and locked_visit["ma_bac_si"] != ma_bac_si:
+            raise AppError(
+                "KHONG_DU_QUYEN",
+                "Chỉ bác sĩ phụ trách mới được xóa xét nghiệm của phiếu này.",
+            )
+        if locked_visit["trang_thai"] != "DANG_KHAM":
+            raise AppError(
+                "PHIEU_DA_HOAN_THANH",
+                "Không thể xóa xét nghiệm của phiếu đã hoàn thành.",
+            )
+        cursor.execute(
+            Q_LOCK_XET_NGHIEM,
+            {"ma_phieu": ma_phieu, "stt": stt},
+        )
+        if cursor.fetchone() is None:
+            raise AppError(
+                "KHONG_TIM_THAY",
+                "Không tìm thấy xét nghiệm cần xóa trong phiếu khám.",
+            )
+        cursor.execute(
+            Q_DELETE_XET_NGHIEM,
+            {"ma_phieu": ma_phieu, "stt": stt},
+        )
+        if cursor.rowcount != 1:
+            raise AppError(
+                "XUNG_DOT_DU_LIEU",
+                "Xét nghiệm vừa thay đổi. Hãy tải lại phiếu khám trước khi xóa.",
+            )
+        commit_attempted = True
+        connection.commit()
+    except AppError:
+        if not commit_attempted:
+            _rollback(connection)
+        raise
+    except mysql.connector.Error as error:
+        if commit_attempted:
+            raise AppError(
+                "COMMIT_CHUA_XAC_DINH",
+                f"Chưa xác định được kết quả xóa xét nghiệm STT {stt}. Hãy tải lại phiếu khám.",
+            ) from error
+        _rollback(connection)
+        logger.exception("Could not delete lab %s for consultation %s", stt, ma_phieu)
+        raise app_error_from_database(error, Q_DELETE_XET_NGHIEM) from error
+    except Exception:
+        if not commit_attempted:
+            _rollback(connection)
         raise
     finally:
         _close_transaction(cursor, connection)
